@@ -232,7 +232,7 @@ describe('INTEGRATION TESTS - API ROUTES & END-TO-END FLOWS', { timeout: 25000 }
       const cryptoIntentReq = new Request('http://localhost:3000/api/payments/intent', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ orderId: order.id, provider: 'TRC20' }),
+        body: JSON.stringify({ orderId: order.id, provider: 'BEP20' }),
       });
       const cryptoIntentRes = await postPaymentIntent(cryptoIntentReq);
       const cryptoIntent = (await cryptoIntentRes.json()).intent;
@@ -333,7 +333,7 @@ describe('INTEGRATION TESTS - API ROUTES & END-TO-END FLOWS', { timeout: 25000 }
         new Request('http://localhost:3000/api/payments/intent', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ orderId: order.id, provider: 'TRC20' }),
+          body: JSON.stringify({ orderId: order.id, provider: 'BEP20' }),
         }),
       );
       const intent = (await intentRes.json()).intent;
