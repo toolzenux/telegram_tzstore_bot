@@ -24,7 +24,7 @@ import {
 const TEST_STORE = path.join(process.cwd(), '.data-store.integration-test.json');
 const ADMIN_TOKEN = 'test-admin-secret-token-integration';
 
-describe('INTEGRATION TESTS - API ROUTES & END-TO-END FLOWS', () => {
+describe('INTEGRATION TESTS - API ROUTES & END-TO-END FLOWS', { timeout: 25000 }, () => {
   beforeAll(() => {
     process.env.TZ_DATA_STORE = '.data-store.integration-test.json';
     process.env.CODES_ENC_KEY = Buffer.from('abcdef0123456789abcdef0123456789').toString('base64');

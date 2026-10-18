@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import Layout from './layout';
 import { useStore } from './store';
-import { get } from './api';
+import { get, post } from './api';
 
 const Login = lazy(() => import('./pages/Login'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -16,6 +16,7 @@ const Referrals = lazy(() => import('./pages/Referrals'));
 const Broadcast = lazy(() => import('./pages/Broadcast'));
 const Settings = lazy(() => import('./pages/Settings'));
 const AdminsAudit = lazy(() => import('./pages/AdminsAudit'));
+const MobileAdminApp = lazy(() => import('./pages/MobileAdminApp'));
 
 const qc = new QueryClient();
 
@@ -25,6 +26,20 @@ function Guard({ children, roles }: { children: JSX.Element; roles?: string[] })
   const [loading, setLoading] = useState(!admin);
   useEffect(() => {
     if (admin) return;
+    const tgInitData = typeof window !== 'undefined' ? (window as any).Telegram?.WebApp?.initData : null;
+    if (!localStorage.getItem('tz_access') && tgInitData) {
+      post('/api/admin/auth/telegram', { initData: tgInitData })
+        .then((res: any) => {
+          if (res?.accessToken) {
+            localStorage.setItem('tz_access', res.accessToken);
+            if (res.refreshToken) localStorage.setItem('tz_refresh', res.refreshToken);
+            setAdmin(res.admin);
+          }
+        })
+        .catch(() => null)
+        .finally(() => setLoading(false));
+      return;
+    }
     if (!localStorage.getItem('tz_access')) { setLoading(false); return; }
     get('/api/auth/me')
       .then((me) => setAdmin(me as never))
@@ -47,6 +62,9 @@ export default function App() {
         <Suspense fallback={<div className="p-8 text-sm">Loading…</div>}>
           <Routes>
             <Route path="/login" element={<Login />} />
+            {/* Dedicated Telegram Admin Mobile App */}
+            <Route path="/mobile" element={<Guard><MobileAdminApp /></Guard>} />
+            {/* Desktop Web Admin Dashboard */}
             <Route element={<Guard><Layout /></Guard>}>
               <Route path="/" element={<Dashboard />} />
               <Route path="/products" element={<Products />} />

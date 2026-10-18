@@ -26,7 +26,11 @@ async function tzFetch(path: string, opts: RequestInit = {}) {
       ...(opts.headers ?? {}),
     },
   });
-  if (!r.ok) throw new Error(`tz-store ${r.status}`);
+  if (!r.ok) {
+    const err = await r.json().catch(() => null);
+    const msg = typeof err?.error === 'string' ? err.error : (err?.error?.message || `tz-store ${r.status}`);
+    throw new Error(msg);
+  }
   return r.json();
 }
 
@@ -34,13 +38,13 @@ export const tzGetProducts = () => tzFetch('/admin/products') as Promise<{ produ
 export const tzGetCategories = () => tzFetch('/categories') as Promise<{ categories: TzCategory[]; source?: string }>;
 export const tzSetPrice = (productId: string, priceUsdt: number) =>
   tzFetch('/admin/products', { method: 'PATCH', body: JSON.stringify({ productId, priceUsdt }) });
-export const tzUpdateProduct = (productId: string, patch: { title?: string; categorySlug?: string; priceUsdt?: number; desc?: string; contents?: string; logo?: string }) =>
+export const tzUpdateProduct = (productId: string, patch: { title?: string; categorySlug?: string; priceUsdt?: number; desc?: string; contents?: string; logo?: string; tiers?: Array<{ minQty: number; unitPrice: number }> }) =>
   tzFetch('/admin/products', { method: 'PATCH', body: JSON.stringify({ productId, ...patch }) }) as Promise<{ ok: boolean }>;
 export const tzAddStock = (productId: string, qty: number) =>
   tzFetch('/admin/products', { method: 'PATCH', body: JSON.stringify({ productId, addStock: qty }) });
 export const tzImportCodes = (productId: string, codes: string) =>
   tzFetch('/admin/codes/import', { method: 'POST', body: JSON.stringify({ productId, codes }) }) as Promise<{ ok: boolean; imported: number }>;
-export const tzCreateProduct = (body: { title: string; categorySlug: string; priceUsdt: number; desc?: string; contents?: string; stock?: number; logo?: string }) =>
+export const tzCreateProduct = (body: { title: string; categorySlug: string; priceUsdt: number; desc?: string; contents?: string; stock?: number; logo?: string; tiers?: Array<{ minQty: number; unitPrice: number }> }) =>
   tzFetch('/admin/products', { method: 'POST', body: JSON.stringify(body) }) as Promise<{ ok: boolean; product: TzProduct }>;
 export const tzCreateCategory = (name: string) =>
   tzFetch('/admin/categories', { method: 'POST', body: JSON.stringify({ name }) }) as Promise<{ ok: boolean; category: TzCategory }>;
@@ -80,3 +84,7 @@ export const tzGetTzOrders = () =>
   tzFetch('/admin/orders') as Promise<{ orders: TzOrder[]; intents: TzIntent[]; revenue: number }>;
 export const tzRefundOrder = (orderId: string) =>
   tzFetch('/admin/refund', { method: 'POST', body: JSON.stringify({ orderId }) }) as Promise<{ ok: boolean; status: string }>;
+export const tzClearOrders = () =>
+  tzFetch('/admin/orders', { method: 'DELETE' }) as Promise<{ ok: boolean }>;
+export const tzDeleteOrder = (orderId: string) =>
+  tzFetch('/admin/orders', { method: 'DELETE', body: JSON.stringify({ orderId }) }) as Promise<{ ok: boolean }>;

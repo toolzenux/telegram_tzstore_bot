@@ -436,7 +436,7 @@ describe('UNIT TESTS - ALL FUNCTIONS', () => {
 
     it('generates demo crypto addresses for supported networks', () => {
       expect(demoAddress('TRC20', 'intent_12345678')).toBe('TEmStoreDemoTRC2012345678');
-      expect(demoAddress('BEP20', 'intent_12345678')).toBe('0xEmStoreDemoBEP2012345678');
+      expect(demoAddress('BEP20', 'intent_12345678')).toBe('0x620b6207d03e59ccf1d1356f78a4f8e9078cf711');
       expect(demoAddress('BTC', 'intent_12345678')).toBe('bc1qemstoredemo12345678');
       expect(demoAddress('STARS', 'intent_12345678')).toBeUndefined();
       expect(demoAddress('BINANCE', 'intent_12345678')).toBeUndefined();

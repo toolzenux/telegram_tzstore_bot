@@ -6,6 +6,9 @@
     "dev": "next dev",
     "build:admin": "npm --prefix admin run build",
     "build": "npx prisma generate && NODE_OPTIONS=\"--max-old-space-size=4096\" next build",
+    "start": "next start",
+    "start:all": "node scripts/start-all.js",
+    "render:start": "node scripts/start-all.js",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "db:push": "prisma db push",
@@ -14,8 +17,13 @@
     "test:unit": "vitest run tests/unit.test.ts",
     "test:fork": "vitest run tests/fork.test.ts",
     "test:integration": "vitest run tests/integration.test.ts",
+    "test:system": "vitest run tests/system-deployment.test.ts",
+    "test:all": "vitest run tests/unit.test.ts tests/integration.test.ts",
     "bot": "tsx bot/bot.ts",
-    "bot:menu": "tsx bot/menu-button.ts"
+    "bot:user": "tsx bot/bot.ts",
+    "bot:admin": "tsx bot/admin-bot.ts",
+    "bot:menu": "tsx bot/menu-button.ts",
+    "bot:verify": "node scripts/verify-bots.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.3",

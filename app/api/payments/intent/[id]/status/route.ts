@@ -21,7 +21,8 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
   if (!it) return NextResponse.json({ error: 'not found' }, { status: 404 });
 
   // Auto-check Binance payment if pending or needs review
-  if ((it.status === 'PENDING' || it.status === 'NEEDS_REVIEW') && it.provider === 'BINANCE') {
+  const ageMs = Date.now() - new Date((it as any).createdAt || Date.now()).getTime();
+  if ((it.status === 'PENDING' || it.status === 'NEEDS_REVIEW') && it.provider === 'BINANCE' && (it.txHash || ageMs > 5000)) {
     try {
       const { checkTxidOnBinance, autoMatchBinancePayment } = await import('@/lib/binance-check');
       const { fulfillOrder } = await import('@/lib/fulfill');

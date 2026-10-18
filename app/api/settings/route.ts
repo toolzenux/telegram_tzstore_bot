@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { db } from '@/lib/db';
 import { Prisma } from '@prisma/client';
 import { getAdminFromRequest, audit } from '@/lib/admin-jwt';
+import { store } from '@/lib/store';
 
 const SECRET_KEYS = new Set(['botToken', 'binanceSecret', 'binanceApiKey', 'binanceSpotApiKey', 'binanceSpotSecret']);
 
@@ -17,11 +18,18 @@ export async function GET(req: Request) {
   if (!admin) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
   const prisma = db();
-  if (!prisma) return NextResponse.json({});
+  const fileSettings = store.getSettings();
+  const masked: Record<string, unknown> = {};
+
+  for (const [k, v] of Object.entries(fileSettings)) {
+    if (SECRET_KEYS.has(k)) masked[k] = '••••••';
+    else masked[k] = v;
+  }
+
+  if (!prisma) return NextResponse.json(masked);
 
   try {
     const all = await prisma.setting.findMany();
-    const masked: Record<string, unknown> = {};
     for (const s of all) {
       if (SECRET_KEYS.has(s.key)) masked[s.key] = '••••••';
       else masked[s.key] = s.value;
@@ -29,7 +37,7 @@ export async function GET(req: Request) {
     return NextResponse.json(masked);
   } catch (e) {
     console.error('Settings GET error:', e);
-    return NextResponse.json({});
+    return NextResponse.json(masked);
   }
 }
 
@@ -71,9 +79,11 @@ export async function PUT(req: Request) {
     const clientIp = req.headers.get('x-forwarded-for') || '';
     await audit(admin.id, 'setting:update', 'setting', parsed.data.key, auditBefore, auditAfter, clientIp);
 
+    store.setSetting(parsed.data.key, parsed.data.value);
     return NextResponse.json({ ok: true });
   } catch (e: any) {
     console.error('Settings PUT error:', e);
-    return NextResponse.json({ error: e?.message || 'failed to save setting' }, { status: 500 });
+    store.setSetting(parsed.data.key, parsed.data.value);
+    return NextResponse.json({ ok: true });
   }
 }

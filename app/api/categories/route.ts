@@ -16,5 +16,8 @@ export async function GET() {
     }
   }
   
-  return NextResponse.json({ categories: merged, source: 'merged' });
+  return NextResponse.json(
+    { categories: merged, source: 'merged' },
+    { headers: { 'Cache-Control': 'public, max-age=15, stale-while-revalidate=45' } },
+  );
 }

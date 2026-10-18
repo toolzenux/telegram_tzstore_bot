@@ -19,7 +19,7 @@ const envSchema = z.object({
   WEBAPP_URL: z.string().default('http://localhost:3000'),
   API_PUBLIC_URL: z.string().default('http://localhost:4000'),
   CORS_ORIGINS: z.string().default('http://localhost:5173,http://localhost:3000'),
-  SUPPORT_URL: z.string().default('https://t.me/TZStoreSupport'),
+  SUPPORT_URL: z.string().default('https://t.me/TzStore_Support'),
   CHANNEL_URL: z.string().default('https://t.me/TZStoreChannel'),
 });
 

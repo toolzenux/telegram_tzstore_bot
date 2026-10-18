@@ -19,7 +19,7 @@ async function main() {
     create: { email: 'admin@tzstore.io', passwordHash: hash, role: 'SUPER_ADMIN' },
   });
   const defaults: Record<string, unknown> = {
-    referralPercent: 5, supportUrl: 'https://t.me/TZStoreSupport', channelUrl: 'https://t.me/TZStoreChannel',
+    referralPercent: 5, supportUrl: 'https://t.me/TzStore_Support', channelUrl: 'https://t.me/TZStoreChannel',
     minDeposit: 1, manualAddresses: { TRC20: '', BEP20: '' }, botToken: '', binanceUid: '1134278389',
     binanceSpotApiKey: '', binanceSpotSecret: '', binanceMerchantId: '', binanceApiKey: '', binanceSecret: '',
   };

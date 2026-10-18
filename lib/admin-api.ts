@@ -29,7 +29,87 @@ const LOGO_OVERRIDES: Record<string, string> = {
   youtube: '/logos/youtube.svg',
 };
 
+const CACHE_TTL_MS = 120_000;
+let catCache: { data: any[]; exp: number } | null = null;
+const slugProductsCache = new Map<string, { data: any[]; exp: number }>();
+const productCache = new Map<string, { data: any; exp: number }>();
+
+export function invalidateSharedCache() {
+  catCache = null;
+  slugProductsCache.clear();
+  productCache.clear();
+}
+
+export async function preloadAllProducts(): Promise<void> {
+  const prisma = db();
+  if (!prisma) return;
+  try {
+    const products = await prisma.product.findMany({
+      where: { isActive: true },
+      include: {
+        category: true,
+        stock: { where: { isSold: false } },
+      },
+      orderBy: { sortOrder: 'asc' },
+    });
+
+    const bySlug = new Map<string, any[]>();
+    const exp = Date.now() + CACHE_TTL_MS;
+
+    for (const p of products) {
+      const slug = slugOf(p.category.name);
+      const stock = p.stock.length;
+      const mapped = {
+        id: p.id,
+        categorySlug: slug,
+        title: p.name,
+        desc: p.description,
+        contents: p.description,
+        priceUsdt: Number(p.priceUsdt),
+        tiers: [] as Array<{ minQty: number; unitPrice: number }>,
+        stock,
+        status: (stock > 0 ? 'ACTIVE' : 'OOS') as 'ACTIVE' | 'OOS',
+        logo: LOGO_OVERRIDES[slug] ?? `/logos/${slug}.svg`,
+      };
+
+      productCache.set(p.id, { data: mapped, exp });
+      const arr = bySlug.get(slug) ?? [];
+      arr.push(mapped);
+      bySlug.set(slug, arr);
+    }
+
+    for (const [slug, arr] of bySlug.entries()) {
+      slugProductsCache.set(slug, { data: arr, exp });
+    }
+  } catch (e) {
+    console.warn('preloadAllProducts error:', e);
+  }
+}
+
+export async function warmupSharedCache() {
+  try {
+    await Promise.allSettled([
+      sharedCategories(),
+      preloadAllProducts(),
+    ]);
+  } catch {}
+}
+
+if (!process.env.VITEST) {
+  setTimeout(() => {
+    warmupSharedCache().catch(() => {});
+  }, 50);
+
+  // Keep shared cache continuously warm every 45s so users get 0ms latency
+  setInterval(() => {
+    warmupSharedCache().catch(() => {});
+  }, 45_000);
+}
+
 export async function sharedCategories() {
+  if (catCache && Date.now() < catCache.exp) {
+    return catCache.data;
+  }
   const prisma = db();
   if (prisma) {
     try {
@@ -38,7 +118,7 @@ export async function sharedCategories() {
         orderBy: { sortOrder: 'asc' },
       });
       if (cats.length > 0) {
-        return cats.map((c, i) => ({
+        const mapped = cats.map((c, i) => ({
           slug: slugOf(c.name),
           backendId: c.id,
           name: c.name,
@@ -46,6 +126,8 @@ export async function sharedCategories() {
           sort: c.sortOrder ?? i,
           logo: LOGO_OVERRIDES[slugOf(c.name)] ?? `/logos/${slugOf(c.name)}.svg`,
         }));
+        catCache = { data: mapped, exp: Date.now() + CACHE_TTL_MS };
+        return mapped;
       }
     } catch (e) {
       console.warn('Prisma sharedCategories error, falling back:', e);
@@ -56,7 +138,7 @@ export async function sharedCategories() {
   if (BASE) {
     const j = await backendGet<{ categories: Array<{ id: string; name: string; emoji: string; sortOrder: number }> }>('/api/public/categories');
     if (j) {
-      return j.categories.map((c, i) => ({
+      const mapped = j.categories.map((c, i) => ({
         slug: slugOf(c.name),
         backendId: c.id,
         name: c.name,
@@ -64,6 +146,8 @@ export async function sharedCategories() {
         sort: c.sortOrder ?? i,
         logo: LOGO_OVERRIDES[slugOf(c.name)] ?? `/logos/${slugOf(c.name)}.svg`,
       }));
+      catCache = { data: mapped, exp: Date.now() + CACHE_TTL_MS };
+      return mapped;
     }
   }
 
@@ -71,76 +155,21 @@ export async function sharedCategories() {
 }
 
 export async function sharedProductsBySlug(slug: string) {
-  const prisma = db();
-  if (prisma) {
-    try {
-      const cats = await prisma.category.findMany({ where: { isActive: true } });
-      const cat = cats.find((c) => slugOf(c.name) === slug);
-      if (cat) {
-        const products = await prisma.product.findMany({
-          where: { categoryId: cat.id, isActive: true },
-          include: {
-            stock: { where: { isSold: false } },
-            category: true,
-          },
-          orderBy: { sortOrder: 'asc' },
-        });
-        return products.map((p) => {
-          const stock = p.stock.length;
-          return {
-            id: p.id,
-            categorySlug: slug,
-            title: p.name,
-            desc: p.description,
-            contents: p.description,
-            priceUsdt: Number(p.priceUsdt),
-            tiers: [] as Array<{ minQty: number; unitPrice: number }>,
-            stock,
-            status: (stock > 0 ? 'ACTIVE' : 'OOS') as 'ACTIVE' | 'OOS',
-            logo: LOGO_OVERRIDES[slug] ?? `/logos/${slug}.svg`,
-          };
-        });
-      }
-    } catch (e) {
-      console.warn('Prisma sharedProductsBySlug error:', e);
-    }
+  const cached = slugProductsCache.get(slug);
+  if (cached && Date.now() < cached.exp) {
+    return cached.data;
   }
-
-  return null;
+  void preloadAllProducts();
+  return cached?.data ?? [];
 }
 
 export async function sharedProduct(id: string) {
-  const prisma = db();
-  if (prisma) {
-    try {
-      const p = await prisma.product.findUnique({
-        where: { id },
-        include: {
-          category: true,
-          stock: { where: { isSold: false } },
-        },
-      });
-      if (p) {
-        const slug = slugOf(p.category.name);
-        const stock = p.stock.length;
-        return {
-          id: p.id,
-          categorySlug: slug,
-          title: p.name,
-          desc: p.description,
-          contents: p.description,
-          priceUsdt: Number(p.priceUsdt),
-          tiers: [] as Array<{ minQty: number; unitPrice: number }>,
-          stock,
-          status: (stock > 0 ? 'ACTIVE' : 'OOS') as 'ACTIVE' | 'OOS',
-          logo: LOGO_OVERRIDES[slug] ?? `/logos/${slug}.svg`,
-        };
-      }
-    } catch (e) {
-      console.warn('Prisma sharedProduct error:', e);
-    }
+  const cached = productCache.get(id);
+  if (cached && Date.now() < cached.exp) {
+    return cached.data;
   }
-  return null;
+  void preloadAllProducts();
+  return cached?.data ?? null;
 }
 
 export async function syncOrderToBackend(order: { orderNo: string; userTg: string; productId: string; qty: number; amountUsdt: number }) {
@@ -241,7 +270,7 @@ export async function sharedOrder(orderNo: string) {
           qty: dbOrder.qty,
           unitPrice: Number(dbOrder.amountUsdt) / (dbOrder.qty || 1),
           total: Number(dbOrder.amountUsdt),
-          status: dbOrder.paymentStatus,
+          status: dbOrder.deliveryStatus === 'DELIVERED' ? 'DELIVERED' : (dbOrder.paymentStatus === 'PAID' ? 'CONFIRMED' : dbOrder.paymentStatus),
           createdAt: dbOrder.createdAt.toISOString(),
           code: dbOrder.deliveredData ?? undefined,
           deliveries,

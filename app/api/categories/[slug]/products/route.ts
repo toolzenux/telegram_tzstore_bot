@@ -32,5 +32,8 @@ export async function GET(_: Request, { params }: { params: { slug: string } }) 
     }
   }
   
-  return NextResponse.json({ products: merged, source: 'merged' });
+  return NextResponse.json(
+    { products: merged, source: 'merged' },
+    { headers: { 'Cache-Control': 'public, max-age=10, stale-while-revalidate=30' } },
+  );
 }

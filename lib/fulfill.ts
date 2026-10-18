@@ -1,4 +1,5 @@
 import { store } from './store';
+import { sendCustomerDelivery, sendAdminLowStockAlert } from './telegram-bot';
 
 // Single shared fulfill path for Stars / crypto / Binance webhooks + manual admin fulfill.
 // Idempotent: only PENDING/CONFIRMED/NEEDS_REVIEW orders are processed; DELIVERED returns as-is.
@@ -84,7 +85,14 @@ export async function fulfillOrder(orderId: string): Promise<{ status: string; d
           const prisma = db();
           if (prisma) await prisma.order.update({ where: { orderNo: order.id }, data: { paymentStatus: 'PAID', deliveryStatus: 'DELIVERED', deliveredData: JSON.stringify(taken) } }).catch(() => null);
         } catch {}
-        sendTelegramDelivery(order.userTg, order, taken).catch(() => null);
+        sendCustomerDelivery(order.userTg, order, taken).catch(() => null);
+        // Low-stock check: alert admin if stock drops to <= 3
+        try {
+          const remaining = store.vaultAvailable(order.productId);
+          if (remaining <= 3) {
+            sendAdminLowStockAlert(order.productId, remaining).catch(() => null);
+          }
+        } catch {}
       })();
     }
     return { status: 'DELIVERED', deliveries: taken };
@@ -101,78 +109,9 @@ export async function fulfillOrder(orderId: string): Promise<{ status: string; d
         const prisma = db();
         if (prisma) await prisma.order.update({ where: { orderNo: order.id }, data: { paymentStatus: 'PAID', deliveryStatus: 'DELIVERED', deliveredData: code } }).catch(() => null);
       } catch {}
-      sendTelegramDelivery(order.userTg, order, [], code).catch(() => null);
+      sendCustomerDelivery(order.userTg, order, [], code).catch(() => null);
     })();
   }
   return { status: 'DELIVERED' };
 }
 
-async function sendTelegramDelivery(userTg: string, order: any, deliveries: Array<{ login: string; password: string }>, code?: string) {
-  if (process.env.VITEST) return;
-  const token = process.env.BOT_TOKEN || '8508569294:AAFan-h5MxrrKGnJGCHGYZX4pRUPDw9Z7CU';
-  if (!token) return;
-
-  let chatId: string | null = null;
-  const tgClean = String(userTg ?? '').trim();
-  if (/^\d+$/.test(tgClean)) {
-    chatId = tgClean;
-  } else {
-    try {
-      const { db } = await import('./db');
-      const prisma = db();
-      if (prisma) {
-        const dbOrder = await prisma.order.findUnique({
-          where: { orderNo: order.id },
-          select: { userId: true },
-        });
-        if (dbOrder?.userId) chatId = String(dbOrder.userId);
-      }
-    } catch {}
-  }
-
-  if (!chatId) return;
-
-  const credLines = (deliveries && deliveries.length > 0)
-    ? deliveries.map((d, i) =>
-        `<b>🔑 Account ${deliveries.length > 1 ? `#${i + 1}` : ''}</b>\n` +
-        `👤 <b>ID / Email:</b> <code>${d.login}</code>\n` +
-        `🔐 <b>Password:</b> <code>${d.password}</code>`
-      ).join('\n\n')
-    : `<b>🔑 Activation Key / Code:</b>\n<code>${code ?? order.code ?? ''}</code>`;
-
-  const webAppUrl = process.env.WEBAPP_URL || 'https://merry-gelato-5debd2.netlify.app';
-  const text =
-    `🎉 <b>Order Delivered Successfully!</b>\n\n` +
-    `📦 <b>Order ID:</b> <code>${order.id}</code>\n` +
-    `🎁 <b>Product:</b> <b>${order.productId}</b>\n` +
-    `🛒 <b>Quantity:</b> ${order.qty}\n` +
-    `💵 <b>Total Paid:</b> $${Number(order.total).toFixed(2)}\n\n` +
-    `📋 <b>Your Delivered Credentials:</b>\n\n` +
-    `${credLines}\n\n` +
-    `💡 <i>Tip: Tap on any ID or Password above to copy it instantly.</i>\n\n` +
-    `💬 Need help? Contact @TZStoreSupport`;
-
-  try {
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        parse_mode: 'HTML',
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: '🛍️ Open Mini App Store', web_app: { url: webAppUrl } },
-            ],
-            [
-              { text: '💬 Contact Support', url: 'https://t.me/TZStoreSupport' },
-            ],
-          ],
-        },
-      }),
-    });
-  } catch (e) {
-    console.error('Failed to send telegram delivery:', e);
-  }
-}

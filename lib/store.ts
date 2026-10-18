@@ -3,7 +3,7 @@
 import fs from 'fs';
 import path from 'path';
 import { PRODUCTS, CATEGORIES } from './seed-data';
-import type { SeedProduct } from './seed-data';
+import type { SeedProduct, BulkTier } from './seed-data';
 import { vaultDecrypt, vaultEncrypt } from './vault-crypto';
 const LOGO = Object.fromEntries(CATEGORIES.map((c: any) => [c.slug, (c as any).logo]));
 const withLogo = <T extends { categorySlug: string }>(p: T) => ({ ...p, logo: (LOGO as Record<string, string>)[p.categorySlug] ?? `/logos/${p.categorySlug}.svg` });
@@ -19,31 +19,41 @@ const FILE = () => {
   return path.join(process.cwd(), '.data-store.json');
 };
 type Order = { id: string; userTg: string; productId: string; qty: number; unitPrice: number; total: number; status: string; createdAt: string; code?: string; deliveries?: Array<{ login: string; password: string }> };
-type Intent = { id: string; orderId: string; provider: string; asset: string; amount: number; address?: string; memo?: string; status: string; expiresAt: string; txHash?: string };
+type Intent = { id: string; orderId: string; provider: string; asset: string; amount: number; address?: string; memo?: string; status: string; expiresAt: string; txHash?: string; invoiceLink?: string };
 export type VaultRow = { id: string; productId: string; login: string; passwordEnc: string; status: 'AVAILABLE' | 'SOLD'; orderId?: string; soldAt?: string; createdAt: string };
-type State = { orders: Order[]; intents: Intent[]; notifs: { userTg: string; productId: string }[]; stockOv: Record<string, number>; priceOv: Record<string, number>; logoOv: Record<string, string>; titleOv: Record<string, string>; descOv: Record<string, string>; contentsOv: Record<string, string>; catOv: Record<string, string>; deletedProducts?: string[]; custom: SeedProduct[]; customCats: Array<{ slug: string; name: string; emoji: string; sort: number; logo: string }>; catOrder: string[]; vault: VaultRow[]; restocks: { id: string; productId: string; qty: number; message: string; createdAt: string }[] };
+type State = { orders: Order[]; intents: Intent[]; notifs: { userTg: string; productId: string }[]; stockOv: Record<string, number>; priceOv: Record<string, number>; tiersOv: Record<string, BulkTier[]>; logoOv: Record<string, string>; titleOv: Record<string, string>; descOv: Record<string, string>; contentsOv: Record<string, string>; catOv: Record<string, string>; deletedProducts?: string[]; custom: SeedProduct[]; customCats: Array<{ slug: string; name: string; emoji: string; sort: number; logo: string }>; catOrder: string[]; vault: VaultRow[]; restocks: { id: string; productId: string; qty: number; message: string; createdAt: string }[]; settings?: Record<string, unknown> };
 let memState: State | null = null;
 let currentFile: string = '';
+let lastMtime: number = 0;
 function load(): State {
   const f = FILE();
-  if (memState && currentFile === f) return memState;
-  currentFile = f;
   try {
-    if (!fs.existsSync(f)) {
-      const bundle = path.join(process.cwd(), '.data-store.json');
-      if (fs.existsSync(bundle)) {
-        try { fs.copyFileSync(bundle, f); } catch {}
-      }
+    if (fs.existsSync(f)) {
+      const mtime = fs.statSync(f).mtimeMs;
+      if (memState && currentFile === f && mtime === lastMtime) return memState;
+      currentFile = f;
+      lastMtime = mtime;
+      const j = JSON.parse(fs.readFileSync(f, 'utf8'));
+      const state: State = { orders: [], intents: [], notifs: [], stockOv: {}, priceOv: {}, tiersOv: {}, logoOv: {}, titleOv: {}, descOv: {}, contentsOv: {}, catOv: {}, deletedProducts: [], custom: [], customCats: [], catOrder: [], vault: [], restocks: [], settings: {}, ...j };
+      memState = state;
+      return state;
     }
-    const j = JSON.parse(fs.readFileSync(f, 'utf8'));
-    const state: State = { orders: [], intents: [], notifs: [], stockOv: {}, priceOv: {}, logoOv: {}, titleOv: {}, descOv: {}, contentsOv: {}, catOv: {}, deletedProducts: [], custom: [], customCats: [], catOrder: [], vault: [], restocks: [], ...j };
-    memState = state;
-    return state;
-  } catch {
-    const fallback: State = { orders: [], intents: [], notifs: [], stockOv: {}, priceOv: {}, logoOv: {}, titleOv: {}, descOv: {}, contentsOv: {}, catOv: {}, deletedProducts: [], custom: [], customCats: [], catOrder: [], vault: [], restocks: [{ id: 'r1', productId: 'p-gemini-18m', qty: 30, message: 'Restocked! Gemini 18 Months', createdAt: new Date().toISOString() }] };
-    memState = fallback;
-    return fallback;
-  }
+    const bundle = path.join(process.cwd(), '.data-store.json');
+    if (fs.existsSync(bundle)) {
+      try { fs.copyFileSync(bundle, f); } catch {}
+      const j = JSON.parse(fs.readFileSync(f, 'utf8'));
+      const state: State = { orders: [], intents: [], notifs: [], stockOv: {}, priceOv: {}, tiersOv: {}, logoOv: {}, titleOv: {}, descOv: {}, contentsOv: {}, catOv: {}, deletedProducts: [], custom: [], customCats: [], catOrder: [], vault: [], restocks: [], settings: {}, ...j };
+      memState = state;
+      currentFile = f;
+      try { lastMtime = fs.statSync(f).mtimeMs; } catch {}
+      return state;
+    }
+
+  } catch {}
+  if (memState && currentFile === f) return memState;
+  const fallback: State = { orders: [], intents: [], notifs: [], stockOv: {}, priceOv: {}, tiersOv: {}, logoOv: {}, titleOv: {}, descOv: {}, contentsOv: {}, catOv: {}, deletedProducts: [], custom: [], customCats: [], catOrder: [], vault: [], restocks: [{ id: 'r1', productId: 'p-gemini-18m', qty: 30, message: 'Restocked! Gemini 18 Months', createdAt: new Date().toISOString() }], settings: {} };
+  memState = fallback;
+  return fallback;
 }
 function save(s: State) {
   const f = FILE();
@@ -51,6 +61,7 @@ function save(s: State) {
   currentFile = f;
   try {
     fs.writeFileSync(f, JSON.stringify(s));
+    try { lastMtime = fs.statSync(f).mtimeMs; } catch {}
   } catch {
     try {
       fs.writeFileSync('/tmp/.data-store.json', JSON.stringify(s));
@@ -64,6 +75,7 @@ function effStock(s: State, p: { id: string; stock: number }) {
   return s.stockOv[p.id] ?? p.stock;
 }
 function effPrice(s: State, p: { id: string; priceUsdt: number }) { return s.priceOv[p.id] ?? p.priceUsdt; }
+function effTiers(s: State, p: SeedProduct): BulkTier[] { return s.tiersOv[p.id] ?? p.tiers ?? []; }
 function effLogo<T extends { id: string; categorySlug: string }>(s: State, p: T) {
   return s.logoOv[p.id] ?? (LOGO as Record<string, string>)[effCat(s, p)] ?? `/logos/${effCat(s, p)}.svg`;
 }
@@ -105,13 +117,13 @@ export const store = {
     s.catOrder = s.catOrder.filter((x) => x !== slug);
     save(s);
   },
-  listProducts: (slug: string) => allSeedAndCustom(load()).filter((p) => { const s = load(); return effCat(s, p) === slug; }).map((p) => { const s = load(); return { ...p, categorySlug: effCat(s, p), title: effTitle(s, p), desc: effDesc(s, p), contents: effContents(s, p), logo: effLogo(s, p), priceUsdt: effPrice(s, p), stock: effStock(s, p) }; }),
+  listProducts: (slug: string) => allSeedAndCustom(load()).filter((p) => { const s = load(); return effCat(s, p) === slug; }).map((p) => { const s = load(); return { ...p, categorySlug: effCat(s, p), title: effTitle(s, p), desc: effDesc(s, p), contents: effContents(s, p), logo: effLogo(s, p), priceUsdt: effPrice(s, p), tiers: effTiers(s, p), stock: effStock(s, p) }; }),
   getProduct: (id: string) => {
     const s = load();
     const p = allSeedAndCustom(s).find((x) => x.id === id);
     if (!p) return undefined;
     const st = effStock(s, p);
-    return { ...p, categorySlug: effCat(s, p), title: effTitle(s, p), desc: effDesc(s, p), contents: effContents(s, p), logo: effLogo(s, p), priceUsdt: effPrice(s, p), stock: st, status: (st <= 0 ? 'OOS' : p.status) as 'ACTIVE' | 'OOS' };
+    return { ...p, categorySlug: effCat(s, p), title: effTitle(s, p), desc: effDesc(s, p), contents: effContents(s, p), logo: effLogo(s, p), priceUsdt: effPrice(s, p), tiers: effTiers(s, p), stock: st, status: (st <= 0 ? 'OOS' : p.status) as 'ACTIVE' | 'OOS' };
   },
   createOrder: (o: Order) => { const s = load(); s.orders.push(o); save(s); return o; },
   getOrder: (id: string) => load().orders.find((o) => o.id === id),
@@ -123,7 +135,7 @@ export const store = {
   addNotif: (userTg: string, productId: string) => { const s = load(); if (!s.notifs.find((n) => n.userTg === userTg && n.productId === productId)) s.notifs.push({ userTg, productId }); save(s); },
   restocks: () => load().restocks,
   addRestock: (r: State['restocks'][number]) => { const s = load(); s.restocks.unshift(r); save(s); },
-  allProducts: () => { const s = load(); return allSeedAndCustom(s).map((p) => ({ ...p, categorySlug: effCat(s, p), title: effTitle(s, p), desc: effDesc(s, p), contents: effContents(s, p), logo: effLogo(s, p), priceUsdt: effPrice(s, p), stock: effStock(s, p) })); },
+  allProducts: () => { const s = load(); return allSeedAndCustom(s).map((p) => ({ ...p, categorySlug: effCat(s, p), title: effTitle(s, p), desc: effDesc(s, p), contents: effContents(s, p), logo: effLogo(s, p), priceUsdt: effPrice(s, p), tiers: effTiers(s, p), stock: effStock(s, p) })); },
   setPrice: (id: string, price: number) => {
     const s = load();
     const seed = PRODUCTS.find((x) => x.id === id);
@@ -133,22 +145,32 @@ export const store = {
     s.priceOv[id] = price;
     save(s);
   },
+  setTiers: (id: string, tiers: BulkTier[]) => {
+    const s = load();
+    const seed = PRODUCTS.find((x) => x.id === id);
+    if (seed) seed.tiers = tiers;
+    const cu = s.custom.find((x) => x.id === id);
+    if (cu) cu.tiers = tiers;
+    s.tiersOv[id] = tiers;
+    save(s);
+  },
   addStock: (id: string, n: number) => { const s = load(); const base = allSeedAndCustom(s).find((x) => x.id === id)?.stock ?? 0; s.stockOv[id] = (s.stockOv[id] ?? base) + n; save(s); },
-  addProduct: (p: { title: string; categorySlug: string; priceUsdt: number; desc?: string; contents?: string; stock?: number; logo?: string }) => {
+  addProduct: (p: { title: string; categorySlug: string; priceUsdt: number; desc?: string; contents?: string; stock?: number; logo?: string; tiers?: BulkTier[] }) => {
     const s = load();
     const id = `p-custom-${Date.now().toString(36)}`;
     const item: SeedProduct = {
       id, categorySlug: p.categorySlug, title: p.title,
       desc: p.desc ?? '', contents: p.contents ?? '',
-      priceUsdt: p.priceUsdt, tiers: [], stock: p.stock ?? 0, status: 'ACTIVE',
+      priceUsdt: p.priceUsdt, tiers: p.tiers ?? [], stock: p.stock ?? 0, status: 'ACTIVE',
     };
     s.custom.push(item);
     if (p.logo) s.logoOv[id] = p.logo;
+    if (p.tiers && p.tiers.length) s.tiersOv[id] = p.tiers;
     save(s);
-    return { ...item, logo: effLogo(s, item) };
+    return { ...item, logo: effLogo(s, item), tiers: effTiers(s, item) };
   },
   setLogo: (id: string, logo: string) => { const s = load(); s.logoOv[id] = logo; save(s); },
-  updateProduct: (id: string, patch: { title?: string; categorySlug?: string; desc?: string; contents?: string; logo?: string }) => {
+  updateProduct: (id: string, patch: { title?: string; categorySlug?: string; desc?: string; contents?: string; logo?: string; tiers?: BulkTier[] }) => {
     const s = load();
     const target = allSeedAndCustom(s).find((x) => x.id === id);
     if (!target) throw new Error('unknown product');
@@ -161,6 +183,7 @@ export const store = {
     if (patch.desc !== undefined) { s.descOv[id] = patch.desc; s.contentsOv[id] = patch.contents ?? patch.desc; if (cu) { cu.desc = patch.desc; cu.contents = patch.contents ?? patch.desc; } }
     if (patch.categorySlug !== undefined) { s.catOv[id] = patch.categorySlug; if (cu) cu.categorySlug = patch.categorySlug; }
     if (patch.logo !== undefined) { s.logoOv[id] = patch.logo; }
+    if (patch.tiers !== undefined) { s.tiersOv[id] = patch.tiers; if (cu) cu.tiers = patch.tiers; if (target) target.tiers = patch.tiers; }
     save(s);
   },
   // ---- Delivery vault (account ID + password rows, encrypted at rest) ----
@@ -231,4 +254,45 @@ export const store = {
   },
   allOrders: () => load().orders,
   allIntents: () => load().intents,
+  clearOrders: () => {
+    const s = load();
+    s.orders = [];
+    s.intents = [];
+    for (const v of s.vault) {
+      if (v.status === 'SOLD') {
+        v.status = 'AVAILABLE';
+        delete v.orderId;
+        delete v.soldAt;
+      }
+    }
+    save(s);
+  },
+  deleteOrder: (id: string) => {
+    const s = load();
+    s.orders = s.orders.filter((o) => o.id !== id);
+    s.intents = s.intents.filter((i) => i.orderId !== id);
+    for (const v of s.vault) {
+      if (v.orderId === id) {
+        v.status = 'AVAILABLE';
+        delete v.orderId;
+        delete v.soldAt;
+      }
+    }
+    save(s);
+  },
+  getSetting: <T = unknown>(key: string, fallback?: T): T | undefined => {
+    const s = load();
+    return (s.settings?.[key] as T) ?? fallback;
+  },
+  setSetting: (key: string, value: unknown) => {
+    const s = load();
+    s.settings = s.settings || {};
+    s.settings[key] = value;
+    save(s);
+  },
+  getSettings: (): Record<string, unknown> => {
+    const s = load();
+    return s.settings || {};
+  },
 };
+

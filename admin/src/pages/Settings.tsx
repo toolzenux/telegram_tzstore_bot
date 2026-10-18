@@ -3,12 +3,12 @@ import { useQuery } from '@tanstack/react-query';
 import { api, get, post } from '../api';
 import { Button, Card, Field, Input, Skeleton, toast } from '../ui';
 
-const TABS = ['Bot', 'Payments', 'Referral', 'Wallet', 'Security'] as const;
+const TABS = ['General', 'Bot', 'Payments', 'Referral', 'Wallet', 'Security'] as const;
 
 import { displaySettingValue, secretPlaceholder, shouldSkipSecret, normalizeSettingInput } from '../settings-util';
 
 export default function Settings() {
-  const [tab, setTab] = useState<(typeof TABS)[number]>('Bot');
+  const [tab, setTab] = useState<(typeof TABS)[number]>('General');
   const [form, setForm] = useState<Record<string, string>>({});
   const [pwd, setPwd] = useState({ cur: '', next: '' });
   const [testingBinance, setTestingBinance] = useState(false);
@@ -64,6 +64,18 @@ export default function Settings() {
       ))}</div>
       {settings.isLoading ? <Skeleton className="h-48" /> : (
         <>
+          {tab === 'General' && <Card><div className="space-y-4">
+            <div>
+              <h3 className="font-bold text-base">Store Profile & Branding</h3>
+              <p className="text-xs text-slate-500">Configure your store name, customer support, and official announcement channels. These reflect dynamically across your customer storefront, Telegram Mini App header, About page, and Telegram bots.</p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field label="Store Name"><Input value={val('storeName')} onChange={(e) => set('storeName', e.target.value)} placeholder="e.g. TZ Store" /></Field>
+              <Field label="Support URL"><Input value={val('supportUrl')} onChange={(e) => set('supportUrl', e.target.value)} placeholder="https://t.me/TzStore_Support" /></Field>
+              <Field label="Channel URL"><Input value={val('channelUrl')} onChange={(e) => set('channelUrl', e.target.value)} placeholder="https://t.me/TZStoreChannel" /></Field>
+            </div>
+            <div><Button onClick={() => save(['storeName', 'supportUrl', 'channelUrl'])}>Save general settings</Button></div>
+          </div></Card>}
           {tab === 'Bot' && <Card><div className="grid gap-3 md:grid-cols-2">
             <Field label="Bot token"><Input type="password" value={val('botToken')} onChange={(e) => set('botToken', e.target.value)} placeholder={secretPh('botToken')} /></Field>
             <Field label="Admin notify chat id"><Input value={val('adminNotifyChatId')} onChange={(e) => set('adminNotifyChatId', e.target.value)} /></Field>

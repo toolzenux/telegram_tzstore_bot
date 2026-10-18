@@ -5,6 +5,9 @@ import { logger } from './logger.js';
 const token = process.env.BOT_TOKEN ?? '';
 export const bot = token ? new Bot(token) : null;
 
+const adminToken = process.env.ADMIN_BOT_TOKEN ?? process.env.BOT_TOKEN ?? '';
+export const adminBot = adminToken ? new Bot(adminToken) : null;
+
 export async function sendUserMessage(telegramId: bigint | number | string, text: string) {
   if (!bot) { logger.warn('bot not configured, skip send'); return; }
   try { await bot.api.sendMessage(String(telegramId), text, { parse_mode: 'HTML' }); }
@@ -13,18 +16,25 @@ export async function sendUserMessage(telegramId: bigint | number | string, text
 
 export async function notifyAdmins(text: string) {
   const chatId = process.env.ADMIN_NOTIFY_CHAT_ID;
-  if (!bot || !chatId) return;
-  try { await bot.api.sendMessage(chatId, text, { parse_mode: 'HTML' }); }
+  const targetBot = adminBot || bot;
+  if (!targetBot || !chatId) return;
+  try { await targetBot.api.sendMessage(chatId, text, { parse_mode: 'HTML' }); }
   catch (e) { logger.error({ e }, 'admin notify failed'); }
 }
 
+
 function formatWelcomeText(name: string, id: number | string, balance: number, referral: number) {
-  return `🥷 <b>Name:</b> ${name}\n🆔 <b>ID:</b> <code>${id}</code>\n💳 <b>Wallet Balance:</b> $${balance.toFixed(2)}\n🎁 <b>Referral Earnings:</b> $${referral.toFixed(2)}\n\nChoose an option below 👇`;
+  return `🥷 <b>Name:</b> ${name}\n🆔 <b>ID:</b> <code>${id}</code>\n💳 <b>Wallet Balance:</b> $${balance.toFixed(2)}\n🎁 <b>Referral Earnings:</b> $${referral.toFixed(2)}\n\n✅ <b>Account Status:</b> Authenticated & Active\nChoose an option below 👇`;
 }
 
 function mainMenu() {
   const CHANNEL = process.env.CHANNEL_URL ?? 'https://t.me/TZStoreChannel';
-  return new InlineKeyboard()
+  const WEBAPP = process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
+  const kb = new InlineKeyboard();
+  if (WEBAPP && (WEBAPP.startsWith('http://') || WEBAPP.startsWith('https://'))) {
+    kb.webApp('🚀 Open TZ Store (Web App)', WEBAPP).row();
+  }
+  return kb
     .text('🛍️ Products', 'menu:products').text('💸 Deposit', 'menu:deposit').row()
     .text('🎁 Referrals', 'menu:referrals').text('🎁 My Orders', 'menu:orders').row()
     .text('🛟 Support', 'menu:support').text('🪪 About', 'menu:about').row()
@@ -61,28 +71,54 @@ function categoriesKb() {
 
 export function registerBotHandlers() {
   if (!bot) return;
-  const SUPPORT = process.env.SUPPORT_URL ?? 'https://t.me/TZStoreSupport';
-  const WEBAPP = process.env.WEBAPP_URL ?? 'https://merry-gelato-5debd2.netlify.app';
+  const SUPPORT = process.env.SUPPORT_URL ?? 'https://t.me/TzStore_Support';
+  const WEBAPP = process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
   const STORE_UID = process.env.BINANCE_UID ?? '1134278389';
 
   bot.command('start', async (ctx) => {
     const from = ctx.from!;
     let referredBy: bigint | null = null;
     const refMatch = String(ctx.match ?? '').trim();
-    if (refMatch.startsWith('ref_')) {
-      const maybe = refMatch.slice(4);
-      if (/^\d+$/.test(maybe) && maybe !== String(from.id)) {
-        const refUser = await prisma.user.findUnique({ where: { telegramId: BigInt(maybe) } }).catch(() => null);
+    if (refMatch) {
+      const cleanRef = refMatch.startsWith('ref_') ? refMatch.slice(4) : refMatch;
+      if (/^\d+$/.test(cleanRef) && cleanRef !== String(from.id)) {
+        const refUser = await prisma.user.findUnique({ where: { telegramId: BigInt(cleanRef) } }).catch(() => null);
         if (refUser) referredBy = refUser.telegramId;
+      } else if (cleanRef) {
+        const refUser = await prisma.user.findUnique({ where: { referralCode: cleanRef } }).catch(() => null);
+        if (refUser && String(refUser.telegramId) !== String(from.id)) referredBy = refUser.telegramId;
       }
     }
-    let user = await prisma.user.findUnique({ where: { telegramId: BigInt(from.id) } }).catch(() => null);
-    if (!user) {
-      const code = `TZ${from.id}${Math.floor(Math.random() * 900 + 100)}`;
-      user = await prisma.user.create({
-        data: { telegramId: BigInt(from.id), username: from.username, firstName: from.first_name, referralCode: code, referredByUserId: referredBy },
-      }).catch(() => null as never);
-    }
+    const randomSuffix = Math.floor(Math.random() * 9000 + 1000).toString();
+    const code = `TZ${String(from.id).slice(-4)}${randomSuffix}`;
+    const user = await prisma.user.upsert({
+      where: { telegramId: BigInt(from.id) },
+      create: {
+        telegramId: BigInt(from.id),
+        username: from.username || null,
+        firstName: from.first_name || null,
+        referralCode: code,
+        referredByUserId: referredBy,
+        status: 'ACTIVE',
+        walletBalance: 0,
+        referralEarnings: 0,
+      },
+      update: {
+        username: from.username || undefined,
+        firstName: from.first_name || undefined,
+      },
+    }).catch(() => null);
+
+    // Set chat menu button to WebApp if configured
+    try {
+      if (WEBAPP && (WEBAPP.startsWith('http://') || WEBAPP.startsWith('https://'))) {
+        await ctx.api.setChatMenuButton({
+          chat_id: ctx.chat.id,
+          menu_button: { type: 'web_app', text: '🛍️ Open Store', web_app: { url: WEBAPP } },
+        });
+      }
+    } catch {}
+
     const bal = Number(user?.walletBalance ?? 0);
     const earn = Number(user?.referralEarnings ?? 0);
     await ctx.reply(formatWelcomeText(from.first_name || 'Rabin Alam', from.id, bal, earn), {
@@ -143,7 +179,7 @@ export function registerBotHandlers() {
 
     let text = `<b>${p.name}</b>\n\n<blockquote>${p.description}</blockquote>\n\n💵 <b>Unit Price:</b> $${Number(p.priceUsdt).toFixed(2)}\n🎁 <b>Stock:</b> ${stock || 1}`;
     if (p.id === 'p-github-student' || p.name.includes('GitHub')) {
-      text = `<b>GitHub Student Developer Pack</b>\n\n<blockquote>The GitHub Student Developer Pack (offered through GitHub Education) gives verified students free access to over 80 tools and services — including cloud credits, domains, developer tools, security and analytics platforms, learning resources, and design/productivity applications.\n\n⚠️ Important usage guidelines:\n✅ This account must be used for personal purposes only. Do not use it for automation, bots, or any illegal activity.\n✅ Use IP: Bangladesh.\n✅ You may change the email and 2FA settings after 7 days. Changing them earlier (or logging in from a new IP) could lead to account suspension.\n\nFull list of offers:\nhttps://education.github.com/pack\n\n👾 Format: Email | Password | 2FA\n\n🌐 2FA Site: https://2fa.live\n\n📌 Account Validity: 2 Year</blockquote>\n\n💵 Unit Price: $10.00\n🎁 Stock: ${stock || 1}`;
+      text = `<b>GitHub Student Developer Pack</b>\n\n<blockquote>The GitHub Student Developer Pack (offered through GitHub Education) gives verified students free access to over 80 tools and services — including cloud credits, domains, developer tools, security and analytics platforms, learning resources, and design/productivity applications.\n\n👾 Format: Email | Password | 2FA</blockquote>\n\n💵 Unit Price: $10.00\n🎁 Stock: ${stock || 1}`;
     }
 
     await ctx.editMessageText(text, {
@@ -190,15 +226,25 @@ export function registerBotHandlers() {
     const bal = Number(u?.walletBalance ?? 0);
     const total = Number(p.priceUsdt) * qty;
 
-    if (bal < total) {
-      await ctx.answerCallbackQuery({ text: 'Insufficient balance! Please deposit funds first.', show_alert: true });
+    // Atomic balance deduction to prevent double-spending race conditions
+    const deduction = await prisma.user.updateMany({
+      where: {
+        telegramId: BigInt(ctx.from.id),
+        walletBalance: { gte: total },
+      },
+      data: {
+        walletBalance: { decrement: total },
+      },
+    });
+
+    if (deduction.count === 0) {
+      await ctx.answerCallbackQuery({ text: 'Insufficient balance or transaction already processed.', show_alert: true });
       return;
     }
 
-    // Deduct balance
-    const updatedUser = await prisma.user.update({
+    const updatedUser = await prisma.user.findUnique({
       where: { telegramId: BigInt(ctx.from.id) },
-      data: { walletBalance: { decrement: total } },
+      select: { walletBalance: true },
     });
 
     // Claim stock item
@@ -226,7 +272,7 @@ export function registerBotHandlers() {
     const kb = new InlineKeyboard().text('🎁 My Orders', 'menu:orders').text('🛍️ Products', 'menu:products').row().text('🔙 Home', 'menu:home');
 
     await ctx.editMessageText(
-      `🎉 <b>Purchase Successful!</b>\n\n📦 <b>Order ID:</b> <code>${orderId}</code>\n🎁 <b>Product:</b> ${p.name}\n🛒 <b>Qty:</b> ${qty}\n💵 <b>Amount Paid:</b> $${total.toFixed(2)}\n💳 <b>Remaining Balance:</b> $${Number(updatedUser.walletBalance).toFixed(2)}\n\n📋 <b>Your Delivered Credentials:</b>\n<code>${deliveryText}</code>\n\n<i>Save your credentials securely. If you need any assistance, contact @TZStoreSupport.</i>`,
+      `🎉 <b>Purchase Successful!</b>\n\n📦 <b>Order ID:</b> <code>${orderId}</code>\n🎁 <b>Product:</b> ${p.name}\n🛒 <b>Qty:</b> ${qty}\n💵 <b>Amount Paid:</b> $${total.toFixed(2)}\n💳 <b>Remaining Balance:</b> $${Number(updatedUser?.walletBalance ?? 0).toFixed(2)}\n\n📋 <b>Your Delivered Credentials:</b>\n<code>${deliveryText}</code>\n\n<i>Save your credentials securely. If you need any assistance, contact @TzStore_Support.</i>`,
       { parse_mode: 'HTML', reply_markup: kb }
     );
     await ctx.answerCallbackQuery();
@@ -282,7 +328,7 @@ export function registerBotHandlers() {
   bot.callbackQuery('menu:support', async (ctx) => {
     const kb = new InlineKeyboard().url('💬 Contact Support', SUPPORT).row().text('🔙 Back', 'menu:home');
     await ctx.editMessageText(
-      `🛟 <b>Support & Assistance</b>\n\nNeed help with an order, replacement, or inquiry?\nOur dedicated support team is available 24/7.\n\n💬 <b>Direct Support:</b> @TZStoreSupport\n📢 <b>Official Channel:</b> @TZStoreChannel`,
+      `🛟 <b>Support & Assistance</b>\n\nNeed help with an order, replacement, or inquiry?\nOur dedicated support team is available 24/7.\n\n💬 <b>Direct Support:</b> @TzStore_Support\n📢 <b>Official Channel:</b> @TZStoreChannel`,
       { parse_mode: 'HTML', reply_markup: kb }
     );
     await ctx.answerCallbackQuery();

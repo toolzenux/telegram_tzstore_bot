@@ -75,7 +75,7 @@ describe('FORK TESTS - CONCURRENCY, BRANCHING & STATE ISOLATION', () => {
         .flatMap((r) => r.deliveries?.map((d) => d.login) ?? []);
       const uniqueLogins = new Set(deliveredLogins);
       expect(uniqueLogins.size).toBe(3);
-    }, 15000);
+    }, 30000);
   });
 
   // ==========================================

@@ -3,6 +3,10 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { store } from '@/lib/store';
 import { requireAdminToken } from '@/lib/admin-auth';
+import { db } from '@/lib/db';
+import { invalidateSharedCache } from '@/lib/admin-api';
+const tierSchema = z.object({ minQty: z.number().int().min(1), unitPrice: z.number().positive() });
+
 export async function GET(req: Request) {
   const denied = requireAdminToken(req);
   if (denied) return denied;
@@ -21,15 +25,18 @@ export async function PATCH(req: Request) {
     categorySlug: z.string().min(2).max(60).optional(),
     desc: z.string().max(2000).optional(),
     contents: z.string().max(2000).optional(),
+    tiers: z.array(tierSchema).optional(),
   }).safeParse(j);
   if (!p.success) return NextResponse.json({ error: 'bad' }, { status: 400 });
   try {
     if (p.data.priceUsdt !== undefined) store.setPrice(p.data.productId, p.data.priceUsdt);
     if (p.data.addStock) store.addStock(p.data.productId, p.data.addStock);
     if (p.data.logo) store.setLogo(p.data.productId, p.data.logo);
+    if (p.data.tiers !== undefined) store.setTiers(p.data.productId, p.data.tiers);
     if (p.data.title !== undefined || p.data.categorySlug !== undefined || p.data.desc !== undefined || p.data.contents !== undefined) {
-      store.updateProduct(p.data.productId, { title: p.data.title, categorySlug: p.data.categorySlug, desc: p.data.desc, contents: p.data.contents, logo: p.data.logo });
+      store.updateProduct(p.data.productId, { title: p.data.title, categorySlug: p.data.categorySlug, desc: p.data.desc, contents: p.data.contents, logo: p.data.logo, tiers: p.data.tiers });
     }
+    invalidateSharedCache();
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : 'update failed' }, { status: 400 });
   }
@@ -47,9 +54,11 @@ export async function POST(req: Request) {
     contents: z.string().max(2000).optional().default(''),
     stock: z.number().int().min(0).max(100000).optional().default(0),
     logo: z.string().max(300).optional().default(''),
+    tiers: z.array(tierSchema).optional().default([]),
   }).safeParse(j);
   if (!p.success) return NextResponse.json({ error: p.error.flatten() }, { status: 400 });
   const created = store.addProduct(p.data);
+  invalidateSharedCache();
   return NextResponse.json({ ok: true, product: created }, { status: 201 });
 }
 
@@ -61,6 +70,11 @@ export async function DELETE(req: Request) {
   if (!p.success) return NextResponse.json({ error: p.error.flatten() }, { status: 400 });
   try {
     store.deleteProduct(p.data.id);
+    const prisma = db();
+    if (prisma) {
+      await prisma.product.deleteMany({ where: { id: p.data.id } });
+    }
+    invalidateSharedCache();
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : 'delete failed' }, { status: 400 });

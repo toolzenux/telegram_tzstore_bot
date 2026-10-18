@@ -6,7 +6,7 @@ export function newId(prefix: string) { return `${prefix}_${crypto.randomBytes(8
 export function starsFor(usdt: number) { return Math.max(1, Math.round(usdt * 70)); }
 export function demoAddress(provider: Provider, intentId: string) {
   if (provider === 'TRC20') return 'TEmStoreDemoTRC20' + intentId.slice(-8);
-  if (provider === 'BEP20') return '0xEmStoreDemoBEP20' + intentId.slice(-8);
+  if (provider === 'BEP20') return process.env.NEXT_PUBLIC_BEP20_WALLET_ADDRESS || process.env.BEP20_WALLET_ADDRESS || '0x620b6207d03e59ccf1d1356f78a4f8e9078cf711';
   if (provider === 'BTC') return 'bc1qemstoredemo' + intentId.slice(-8);
   return undefined;
 }

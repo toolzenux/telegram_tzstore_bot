@@ -2,6 +2,7 @@
 // Run: npm run bot (polling). Uses BOT_TOKEN, Supabase PostgreSQL, and Binance Spot API.
 import fs from 'node:fs';
 import path from 'node:path';
+import https from 'node:https';
 import { Bot, InlineKeyboard } from 'grammy';
 import crypto from 'node:crypto';
 
@@ -29,17 +30,41 @@ import { CATEGORIES, PRODUCTS, unitPriceFor } from '../lib/seed-data';
 import { store } from '../lib/store';
 import { getCustomEmoji, setCustomEmoji, getAllCustomEmojis, tgEmoji, makeCustomButton } from '../lib/custom-emojis';
 
-const token = process.env.BOT_TOKEN || '8508569294:AAFan-h5MxrrKGnJGCHGYZX4pRUPDw9Z7CU';
-if (!token) throw new Error('BOT_TOKEN missing');
-const bot = new Bot(token);
+const token = process.env.BOT_TOKEN || '';
+if (!token && !process.env.VITEST) {
+  console.warn('BOT_TOKEN missing in environment');
+}
+const ipv4Agent = new https.Agent({ family: 4, keepAlive: true });
+const bot = new Bot(token || 'dummy_token_for_init', {
+  client: {
+    baseFetchConfig: {
+      agent: ipv4Agent,
+      compress: true,
+    },
+  },
+});
 
-const WEBAPP = process.env.WEBAPP_URL ?? 'https://merry-gelato-5debd2.netlify.app';
+const WEBAPP = process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
 const CHANNEL = process.env.CHANNEL_URL ?? 'https://t.me/TZStoreChannel';
-const SUPPORT = process.env.SUPPORT_URL ?? 'https://t.me/TZStoreSupport';
+const SUPPORT = process.env.SUPPORT_URL ?? 'https://t.me/TzStore_Support';
 const STORE_UID = process.env.BINANCE_UID ?? '1134278389';
-const SPOT_KEY = process.env.BINANCE_SPOT_API_KEY ?? '8AC5IBHuLtYmwxP3aqvdh3YUKySlXmJCEUdC7x1sKjbd9C4ODscox0ExcDW3YjM6';
-const SPOT_SECRET = process.env.BINANCE_SPOT_SECRET ?? 'ainPYiuOTrnNMfyi99NQ62A6jsgk7l29WdmHnAs6kfXeFKEXndzWB5aAGaoR8Uvs';
+const SPOT_KEY = process.env.BINANCE_SPOT_API_KEY ?? '';
+const SPOT_SECRET = process.env.BINANCE_SPOT_SECRET ?? '';
 const ADMIN_CHAT = process.env.ADMIN_NOTIFY_CHAT_ID ?? '';
+
+function isBotAdmin(fromId: number | string | undefined): boolean {
+  if (!fromId) return false;
+  const adminIds = new Set(
+    [
+      process.env.ADMIN_NOTIFY_CHAT_ID,
+      ...(process.env.ADMIN_USER_IDS ?? '').split(','),
+      ...(process.env.ADMIN_TG_IDS ?? '').split(','),
+    ]
+      .map((s) => s?.trim())
+      .filter(Boolean)
+  );
+  return adminIds.has(String(fromId));
+}
 
 // Lazy Prisma Client for Supabase
 let prisma: PrismaClient | null = null;
@@ -78,31 +103,41 @@ async function getOrRegisterUser(from: { id: number; first_name?: string; userna
 
   if (prisma) {
     try {
-      let u = await prisma.user.findUnique({ where: { telegramId: BigInt(from.id) } });
-      if (!u) {
-        let referredBy: bigint | null = null;
-        if (refParam && refParam.startsWith('ref_')) {
-          const maybeId = refParam.slice(4);
-          if (/^\d+$/.test(maybeId) && maybeId !== String(from.id)) {
-            const referrer = await prisma.user.findUnique({ where: { telegramId: BigInt(maybeId) } }).catch(() => null);
-            if (referrer) referredBy = referrer.telegramId;
-          }
-        }
+      let referredBy: bigint | null = null;
+      if (refParam) {
+        const cleanRef = refParam.trim();
+        const target = cleanRef.startsWith('ref_') ? cleanRef.slice(4) : cleanRef;
 
-        const code = `TZ${from.id}${Math.floor(Math.random() * 900 + 100)}`;
-        u = await prisma.user.create({
-          data: {
-            telegramId: BigInt(from.id),
-            username: from.username || null,
-            firstName: from.first_name || null,
-            referralCode: code,
-            referredByUserId: referredBy,
-            status: 'ACTIVE',
-            walletBalance: 0,
-            referralEarnings: 0,
-          },
-        });
+        if (/^\d+$/.test(target) && target !== String(from.id)) {
+          const referrer = await prisma.user.findUnique({ where: { telegramId: BigInt(target) } }).catch(() => null);
+          if (referrer) referredBy = referrer.telegramId;
+        } else if (target) {
+          const referrer = await prisma.user.findUnique({ where: { referralCode: target } }).catch(() => null);
+          if (referrer && String(referrer.telegramId) !== String(from.id)) referredBy = referrer.telegramId;
+        }
       }
+
+      const randomSuffix = Math.floor(Math.random() * 9000 + 1000).toString();
+      const code = `TZ${String(from.id).slice(-4)}${randomSuffix}`;
+
+      const u = await prisma.user.upsert({
+        where: { telegramId: BigInt(from.id) },
+        create: {
+          telegramId: BigInt(from.id),
+          username: from.username || null,
+          firstName: from.first_name || null,
+          referralCode: code,
+          referredByUserId: referredBy,
+          status: 'ACTIVE',
+          walletBalance: 0,
+          referralEarnings: 0,
+        },
+        update: {
+          username: from.username || undefined,
+          firstName: from.first_name || undefined,
+        },
+      });
+
       return {
         id: from.id,
         name: from.first_name || u.firstName || 'Rabin Alam',
@@ -120,8 +155,40 @@ async function getOrRegisterUser(from: { id: number; first_name?: string; userna
   if (!mem) {
     mem = defaultUser;
     memUsers.set(from.id, mem);
+  } else {
+    if (from.first_name) mem.name = from.first_name;
+    if (from.username) mem.username = from.username;
   }
   return mem;
+}
+
+async function deductUserBalanceAtomic(telegramId: number, amount: number): Promise<{ success: boolean; newBalance: number }> {
+  if (prisma) {
+    try {
+      const res = await prisma.user.updateMany({
+        where: {
+          telegramId: BigInt(telegramId),
+          walletBalance: { gte: amount },
+        },
+        data: {
+          walletBalance: { decrement: amount },
+        },
+      });
+      if (res.count === 0) return { success: false, newBalance: 0 };
+      const updated = await prisma.user.findUnique({ where: { telegramId: BigInt(telegramId) }, select: { walletBalance: true } });
+      return { success: true, newBalance: Number(updated?.walletBalance ?? 0) };
+    } catch (e) {
+      console.warn('Prisma deductUserBalanceAtomic fallback:', e);
+    }
+  }
+
+  const mem = memUsers.get(telegramId);
+  if (mem) {
+    if (mem.balance < amount) return { success: false, newBalance: mem.balance };
+    mem.balance = Math.max(0, Math.round((mem.balance - amount) * 100) / 100);
+    return { success: true, newBalance: mem.balance };
+  }
+  return { success: false, newBalance: 0 };
 }
 
 async function adjustUserBalance(telegramId: number, delta: number): Promise<number> {
@@ -191,11 +258,49 @@ function formatWelcomeText(name: string, id: number | string, balance: number, r
   const idIcon = tgEmoji('id', '🆔');
   const balIcon = tgEmoji('wallet', '💳');
   const refIcon = tgEmoji('referral', '🎁');
-  return `${profileIcon} <b>Name:</b> ${name}\n${idIcon} <b>ID:</b> <code>${id}</code>\n${balIcon} <b>Wallet Balance:</b> $${balance.toFixed(2)}\n${refIcon} <b>Referral Earnings:</b> $${referral.toFixed(2)}\n\nChoose an option below 👇`;
+  return `${profileIcon} <b>Name:</b> ${name}\n${idIcon} <b>ID:</b> <code>${id}</code>\n${balIcon} <b>Wallet Balance:</b> $${balance.toFixed(2)}\n${refIcon} <b>Referral Earnings:</b> $${referral.toFixed(2)}\n\n✅ <b>Account Status:</b> Authenticated & Active\nChoose an option below 👇`;
 }
 
-function mainMenu() {
+let brandingCache: { storeName: string; supportUrl: string; channelUrl: string } | null = null;
+let brandingCacheTime = 0;
+
+async function getStoreBranding(): Promise<{ storeName: string; supportUrl: string; channelUrl: string }> {
+  const now = Date.now();
+  if (brandingCache && now - brandingCacheTime < 10000) {
+    return brandingCache;
+  }
+  let storeName = store.getSetting<string>('storeName') || process.env.NEXT_PUBLIC_STORE_NAME || 'TZ Store';
+  let supportUrl = store.getSetting<string>('supportUrl') || process.env.SUPPORT_URL || 'https://t.me/TzStore_Support';
+  let channelUrl = store.getSetting<string>('channelUrl') || process.env.CHANNEL_URL || 'https://t.me/TZStoreChannel';
+
+  if (prisma) {
+    try {
+      const rows = await prisma.setting.findMany({
+        where: { key: { in: ['storeName', 'supportUrl', 'channelUrl'] } },
+      });
+      for (const row of rows) {
+        if (row.key === 'storeName' && typeof row.value === 'string' && row.value.trim()) storeName = row.value.trim();
+        if (row.key === 'supportUrl' && typeof row.value === 'string' && row.value.trim()) supportUrl = row.value.trim();
+        if (row.key === 'channelUrl' && typeof row.value === 'string' && row.value.trim()) channelUrl = row.value.trim();
+      }
+    } catch {}
+  }
+
+  brandingCache = { storeName, supportUrl, channelUrl };
+  brandingCacheTime = now;
+  return brandingCache;
+}
+
+async function mainMenu() {
+  const { storeName, channelUrl } = await getStoreBranding();
   const kb = new InlineKeyboard();
+  if (WEBAPP) {
+    if (WEBAPP.startsWith('https://')) {
+      kb.row({ text: `🚀 Open ${storeName} (Web App)`, web_app: { url: WEBAPP } });
+    } else if (WEBAPP.startsWith('http://')) {
+      kb.row({ text: `🚀 Open ${storeName}`, url: WEBAPP });
+    }
+  }
   kb.row(
     makeCustomButton('products', '🛍️ Products', 'menu:products', 'primary'),
     makeCustomButton('deposit', '💸 Deposit', 'menu:deposit', 'success')
@@ -211,7 +316,7 @@ function mainMenu() {
   kb.row(
     makeCustomButton('api', '🔑 API', 'menu:api')
   );
-  kb.row({ text: '📢 Join Our Channel', url: CHANNEL });
+  kb.row({ text: '📢 Join Our Channel', url: channelUrl || CHANNEL });
   return kb;
 }
 
@@ -246,11 +351,25 @@ function categoriesKb() {
 }
 
 function formatProductDetail(p: any, stockCount: number) {
+  let body = '';
   if (p.id === 'p-github-student') {
-    return `<b>GitHub Student Developer Pack</b>\n\n<blockquote>The GitHub Student Developer Pack (offered through GitHub Education) gives verified students free access to over 80 tools and services — including cloud credits, domains, developer tools, security and analytics platforms, learning resources, and design/productivity applications.\n\n⚠️ Important usage guidelines:\n✅ This account must be used for personal purposes only. Do not use it for automation, bots, or any illegal activity.\n✅ Use IP: Bangladesh.\n✅ You may change the email and 2FA settings after 7 days. Changing them earlier (or logging in from a new IP) could lead to account suspension.\n\nFull list of offers:\nhttps://education.github.com/pack\n\n👾 Format: Email | Password | 2FA\n\n🌐 2FA Site: https://2fa.live\n\n📌 Account Validity: 2 Year</blockquote>\n\n💵 Unit Price: $${Number(p.priceUsdt).toFixed(2)}\n🎁 Stock: ${stockCount}`;
+    body = `<b>GitHub Student Developer Pack</b>\n\n<blockquote>The GitHub Student Developer Pack (offered through GitHub Education) gives verified students free access to over 80 tools and services — including cloud credits, domains, developer tools, security and analytics platforms, learning resources, and design/productivity applications.\n\n👾 Format: Email | Password | 2FA</blockquote>\n\n💵 Unit Price: $${Number(p.priceUsdt).toFixed(2)}\n🎁 Stock: ${stockCount}`;
+  } else {
+    body = `<b>${p.title || p.name}</b>\n\n<blockquote>${p.desc || p.description}\n\n📦 Format & Access: ${p.contents || 'Instant auto delivery'}</blockquote>\n\n💵 Unit Price: $${Number(p.priceUsdt).toFixed(2)}\n🎁 Stock: ${stockCount}`;
   }
 
-  return `<b>${p.title || p.name}</b>\n\n<blockquote>${p.desc || p.description}\n\n📦 Format & Access: ${p.contents || 'Instant auto delivery'}</blockquote>\n\n💵 Unit Price: $${Number(p.priceUsdt).toFixed(2)}\n🎁 Stock: ${stockCount}`;
+  const tiers = p.tiers && Array.isArray(p.tiers) ? p.tiers : [];
+  if (tiers.length > 0) {
+    const sorted = [...tiers].sort((a: any, b: any) => a.minQty - b.minQty);
+    body += `\n\n🏷️ <b>Bulk Quantity Discounts:</b>\n`;
+    for (const t of sorted) {
+      const discountPct = Math.round((1 - t.unitPrice / p.priceUsdt) * 100);
+      const badge = discountPct > 0 ? ` <i>(−${discountPct}%)</i>` : '';
+      body += `• <b>${t.minQty}+ pcs:</b> $${Number(t.unitPrice).toFixed(2)}/pc${badge}\n`;
+    }
+  }
+
+  return body;
 }
 
 // -------------------------------------------------------------
@@ -261,9 +380,24 @@ bot.command('start', async (ctx) => {
   const from = ctx.from!;
   const refParam = ctx.match ? String(ctx.match).trim() : undefined;
   const user = await getOrRegisterUser(from, refParam);
+
+  // Set chat menu button to WebApp if configured with HTTPS
+  try {
+    if (WEBAPP && WEBAPP.startsWith('https://')) {
+      await ctx.api.setChatMenuButton({
+        chat_id: ctx.chat.id,
+        menu_button: {
+          type: 'web_app',
+          text: '🛍️ Open Store',
+          web_app: { url: WEBAPP },
+        },
+      });
+    }
+  } catch {}
+
   await ctx.reply(formatWelcomeText(user.name, user.id, user.balance, user.referral), {
     parse_mode: 'HTML',
-    reply_markup: mainMenu(),
+    reply_markup: await mainMenu(),
   });
 });
 
@@ -272,7 +406,7 @@ bot.callbackQuery('menu:home', async (ctx) => {
   const user = await getOrRegisterUser(from);
   await ctx.editMessageText(formatWelcomeText(user.name, user.id, user.balance, user.referral), {
     parse_mode: 'HTML',
-    reply_markup: mainMenu(),
+    reply_markup: await mainMenu(),
   });
   await ctx.answerCallbackQuery();
 });
@@ -287,7 +421,8 @@ bot.callbackQuery('menu:products', async (ctx) => {
 
 bot.callbackQuery(/^cat:(.+)$/, async (ctx) => {
   const slug = ctx.match![1];
-  const list = PRODUCTS.filter((p) => p.categorySlug === slug || (slug === 'tz-vip' && p.categorySlug === 'tz-vip'));
+  const allProds = store.allProducts?.() || PRODUCTS;
+  const list = allProds.filter((p: any) => p.categorySlug === slug || (slug === 'tz-vip' && p.categorySlug === 'tz-vip'));
   if (!list.length) {
     await ctx.answerCallbackQuery({ text: 'No products in this category yet', show_alert: false });
     return;
@@ -296,8 +431,9 @@ bot.callbackQuery(/^cat:(.+)$/, async (ctx) => {
   const catObj = CATEGORIES.find((c) => c.slug === slug);
   const emoji = catObj?.emoji || '📦';
   const kb = new InlineKeyboard();
-  list.forEach((p) => {
-    kb.row(makeCustomButton(slug, `${emoji} ${p.title} — $${p.priceUsdt.toFixed(2)}`, `prod:${p.id}`, 'primary'));
+  list.forEach((p: any) => {
+    const hasTiers = Array.isArray(p.tiers) && p.tiers.length > 0;
+    kb.row(makeCustomButton(slug, `${emoji} ${p.title} — $${p.priceUsdt.toFixed(2)}${hasTiers ? ' 🏷️' : ''}`, `prod:${p.id}`, 'primary'));
   });
   kb.row(makeCustomButton('back', '🔙 Back', 'menu:products', 'danger'));
 
@@ -312,6 +448,25 @@ function renderOrderSummary(p: any, qty: number, user: UserSession): { text: str
   const orderId = `ord_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 
   const kb = new InlineKeyboard();
+
+  // Quantity stepper row
+  const prevQty = Math.max(1, qty - 1);
+  const nextQty = qty + 1;
+  kb.text('➖', `qty:${p.id}:${prevQty}`)
+    .text(`📦 Qty: ${qty} pcs`, `qty:${p.id}:${qty}`)
+    .text('➕', `qty:${p.id}:${nextQty}`)
+    .row();
+
+  // Preset bulk tier shortcut buttons if tiers exist
+  const tiers = p.tiers && Array.isArray(p.tiers) ? p.tiers : [];
+  if (tiers.length > 0) {
+    const sorted = [...tiers].sort((a: any, b: any) => a.minQty - b.minQty);
+    for (const t of sorted) {
+      kb.text(`${t.minQty}x ($${Number(t.unitPrice).toFixed(2)})`, `qty:${p.id}:${t.minQty}`);
+    }
+    kb.row();
+  }
+
   if (need > 0) {
     kb.row(makeCustomButton('deposit', '💸 Deposit Funds', 'menu:deposit', 'success'));
   } else {
@@ -323,14 +478,31 @@ function renderOrderSummary(p: any, qty: number, user: UserSession): { text: str
   );
 
   const productIcon = tgEmoji(p.categorySlug || 'product', '🎒');
-  const text = `ℹ️ <b>Order Summary</b>\n\n${productIcon} <b>${p.title}</b>\n🛒 <b>Qty:</b> ${qty}\n💵 <b>Price:</b> $${unit.toFixed(2)} each\n💈 <b>Total:</b> ${qty} × $${unit.toFixed(2)} = $${total.toFixed(2)}\n\n${need > 0 ? `❌ <b>Insufficient Balance</b>\n💳 <b>Your Wallet:</b> $${user.balance.toFixed(2)}\n💸 <b>You Need:</b> $${need.toFixed(2)} more\n\nPlease deposit funds to complete this purchase.` : `✅ <b>Wallet Balance:</b> $${user.balance.toFixed(2)}\n💳 <b>Remaining after purchase:</b> $${(user.balance - total).toFixed(2)}`}`;
+  const savings = Math.max(0, Math.round((p.priceUsdt - unit) * qty * 100) / 100);
+  const text = `ℹ️ <b>Order Summary</b>\n\n${productIcon} <b>${p.title}</b>\n🛒 <b>Qty:</b> ${qty} pcs\n💵 <b>Unit Price:</b> $${unit.toFixed(2)} each${savings > 0 ? ` <i>(Bulk discount applied! Saved $${savings.toFixed(2)})</i>` : ''}\n💈 <b>Total:</b> ${qty} × $${unit.toFixed(2)} = $${total.toFixed(2)}\n\n${need > 0 ? `❌ <b>Insufficient Balance</b>\n💳 <b>Your Wallet:</b> $${user.balance.toFixed(2)}\n💸 <b>You Need:</b> $${need.toFixed(2)} more\n\nPlease deposit funds to complete this purchase.` : `✅ <b>Wallet Balance:</b> $${user.balance.toFixed(2)}\n💳 <b>Remaining after purchase:</b> $${(user.balance - total).toFixed(2)}`}`;
 
   return { text, kb };
 }
 
+bot.callbackQuery(/^qty:(.+):(\d+)$/, async (ctx) => {
+  const pid = ctx.match![1];
+  const qty = Math.max(1, Math.min(100, Number(ctx.match![2])));
+  const p: any = store.getProduct(pid) || PRODUCTS.find((x) => x.id === pid);
+  if (!p) return;
+
+  const user = await getOrRegisterUser(ctx.from!);
+  const { text, kb } = renderOrderSummary(p, qty, user);
+
+  await ctx.editMessageText(text, {
+    parse_mode: 'HTML',
+    reply_markup: kb,
+  });
+  await ctx.answerCallbackQuery();
+});
+
 bot.callbackQuery(/^prod:(.+)$/, async (ctx) => {
   const pid = ctx.match![1];
-  const p: any = PRODUCTS.find((x) => x.id === pid);
+  const p: any = store.getProduct(pid) || PRODUCTS.find((x) => x.id === pid);
   if (!p) return;
 
   userViewingProduct.set(ctx.from!.id, pid);
@@ -359,7 +531,7 @@ bot.callbackQuery(/^prod:(.+)$/, async (ctx) => {
 
 bot.callbackQuery(/^buy:(.+)$/, async (ctx) => {
   const pid = ctx.match![1];
-  const p: any = PRODUCTS.find((x) => x.id === pid);
+  const p: any = store.getProduct(pid) || PRODUCTS.find((x) => x.id === pid);
   if (!p) return;
 
   userViewingProduct.set(ctx.from!.id, pid);
@@ -377,19 +549,20 @@ bot.callbackQuery(/^pay:(.+):(.+):(\d+)$/, async (ctx) => {
   const orderId = ctx.match![1];
   const pid = ctx.match![2];
   const qty = Number(ctx.match![3]);
-  const p: any = PRODUCTS.find((x) => x.id === pid);
+  const p: any = store.getProduct(pid) || PRODUCTS.find((x) => x.id === pid);
   if (!p) return;
 
   const user = await getOrRegisterUser(ctx.from!);
-  const total = Math.round(p.priceUsdt * qty * 100) / 100;
+  const unitPrice = unitPriceFor(p, qty);
+  const total = Math.round(unitPrice * qty * 100) / 100;
 
-  if (user.balance < total) {
-    await ctx.answerCallbackQuery({ text: 'Insufficient balance! Please deposit funds first.', show_alert: true });
+  // Atomic balance deduction to prevent concurrent double-spending race conditions
+  const deduction = await deductUserBalanceAtomic(ctx.from!.id, total);
+  if (!deduction.success) {
+    await ctx.answerCallbackQuery({ text: 'Insufficient balance or transaction already processed.', show_alert: true });
     return;
   }
-
-  // Deduct balance
-  const newBal = await adjustUserBalance(ctx.from!.id, -total);
+  const newBal = deduction.newBalance;
 
   // Take delivery items
   let deliveries: Array<{ login: string; password: string }> = [];
@@ -422,7 +595,7 @@ bot.callbackQuery(/^pay:(.+):(.+):(\d+)$/, async (ctx) => {
     userTg: String(ctx.from!.id),
     productId: pid,
     qty,
-    unitPrice: p.priceUsdt,
+    unitPrice,
     total,
     status: 'PAID',
     createdAt: new Date().toISOString(),
@@ -434,7 +607,7 @@ bot.callbackQuery(/^pay:(.+):(.+):(\d+)$/, async (ctx) => {
   const kb = new InlineKeyboard().text('🎁 My Orders', 'menu:orders').text('🛍️ Products', 'menu:products').row().text('🔙 Home', 'menu:home');
 
   await ctx.editMessageText(
-    `🎉 <b>Purchase Successful!</b>\n\n📦 <b>Order ID:</b> <code>${orderId}</code>\n🎁 <b>Product:</b> ${p.title}\n🛒 <b>Qty:</b> ${qty}\n💵 <b>Amount Paid:</b> $${total.toFixed(2)}\n💳 <b>Remaining Balance:</b> $${newBal.toFixed(2)}\n\n📋 <b>Your Delivered Credentials:</b>\n${credText}\n\n<i>Save your credentials securely. If you need any assistance, contact @TZStoreSupport.</i>`,
+    `🎉 <b>Purchase Successful!</b>\n\n📦 <b>Order ID:</b> <code>${orderId}</code>\n🎁 <b>Product:</b> ${p.title}\n🛒 <b>Qty:</b> ${qty}\n💵 <b>Amount Paid:</b> $${total.toFixed(2)}\n💳 <b>Remaining Balance:</b> $${newBal.toFixed(2)}\n\n📋 <b>Your Delivered Credentials:</b>\n${credText}\n\n<i>Save your credentials securely. If you need any assistance, contact @TzStore_Support.</i>`,
     { parse_mode: 'HTML', reply_markup: kb }
   );
   await ctx.answerCallbackQuery();
@@ -442,15 +615,15 @@ bot.callbackQuery(/^pay:(.+):(.+):(\d+)$/, async (ctx) => {
 
 bot.callbackQuery('menu:deposit', async (ctx) => {
   const kb = new InlineKeyboard()
-    .text('⭐ Telegram Stars (Auto)', 'dep:STARS').row()
-    .text('🟡 Binance UID', 'dep:BINANCE').row()
-    .text('🅣 USDT TRC20 (Auto)', 'dep:TRC20').row()
+    .text('🟡 Binance UID (Instant)', 'dep:BINANCE').row()
     .text('🅣 USDT BEP20 (Auto)', 'dep:BEP20').row()
-    .text('🅑 Bitcoin (Auto)', 'dep:BTC').row()
     .text('🔙 Back', 'menu:home');
 
   await ctx.editMessageText(
-    '💳 <b>Select a payment method:</b>\n\n⚡ <i>All deposit methods are auto-detected & instant:</i>\n• ⭐ <b>Telegram Stars:</b> 1-Tap in-app deposit\n• 🟡 <b>Binance UID:</b> Zero fee internal transfer\n• 🅣 <b>USDT TRC20:</b> Instant on-chain credit\n• 🅣 <b>USDT BEP20:</b> Instant on-chain credit\n• 🅑 <b>Bitcoin:</b> Instant on-chain credit',
+    '💳 <b>Select a deposit method:</b>\n\n' +
+    '⚡ <i>All deposit methods are auto-detected & instant:</i>\n' +
+    '• 🟡 <b>Binance UID:</b> Zero fee internal transfer (Instant)\n' +
+    '• 🅣 <b>USDT BEP20:</b> BNB Smart Chain instant on-chain credit',
     { parse_mode: 'HTML', reply_markup: kb }
   );
   await ctx.answerCallbackQuery();
@@ -464,9 +637,28 @@ bot.callbackQuery(/^dep:(.+)$/, async (ctx) => {
 
   const kb = new InlineKeyboard().text('📝 Submit TxID / Order ID', `submit:${id}`).row().text('🔄 Check Status', `status:${id}`).row().text('🔙 Back', 'menu:deposit');
 
+  const bep20Address = process.env.BEP20_WALLET_ADDRESS || '0x620b6207d03e59ccf1d1356f78a4f8e9078cf711';
+
   if (provider === 'BINANCE') {
     await ctx.editMessageText(
-      `🟡 <b>Binance UID — Deposit ${ref}</b>\n\n📩 Send <b>ANY AMOUNT</b> to the address below.\n\n🧾 <b>To UID:</b>\n<code>${STORE_UID}</code>\n\n⏳ Expires in: <b>20 minutes</b>\n🔄 Status: <i>Pending Payment</i>\n\n⚠️ <b>IMPORTANT:</b> After sending the funds, paste your Binance Order ID / TxID here to get credited.`,
+      `🟡 <b>Binance UID — Deposit ${ref}</b>\n\n` +
+      `📩 Send <b>ANY AMOUNT</b> via Binance internal transfer to:\n\n` +
+      `🧾 <b>To Binance UID:</b>\n<code>${STORE_UID}</code>\n\n` +
+      `⏳ Expires in: <b>20 minutes</b>\n` +
+      `🔄 Status: <i>Pending Payment</i>\n\n` +
+      `⚠️ <b>IMPORTANT:</b> After sending the funds, click <b>Submit TxID / Order ID</b> below and paste your Binance Order ID to get credited automatically.`,
+      { parse_mode: 'HTML', reply_markup: kb }
+    );
+  } else if (provider === 'BEP20') {
+    await ctx.editMessageText(
+      `🅣 <b>Deposit USDT to Binance (BEP20) — ${ref}</b>\n\n` +
+      `📩 Send <b>USDT</b> on the <b>BNB Smart Chain (BEP20)</b> network:\n\n` +
+      `🌐 <b>Network:</b> <code>BNB Smart Chain (BEP20)</code>\n` +
+      `📍 <b>Wallet Address:</b>\n<code>${bep20Address}</code>\n\n` +
+      `⚠️ <i>Don't send NFTs to this address. Send USDT (BEP20) only.</i>\n\n` +
+      `⏳ Expires in: <b>20 minutes</b>\n` +
+      `🔄 Status: <i>Pending Payment</i>\n\n` +
+      `💡 <i>After sending, click <b>Submit TxID / Order ID</b> below and paste your TxID hash to get credited automatically.</i>`,
       { parse_mode: 'HTML', reply_markup: kb }
     );
   } else {
@@ -501,10 +693,11 @@ bot.callbackQuery(/^status:(.+)$/, async (ctx) => {
 });
 
 bot.callbackQuery('menu:referrals', async (ctx) => {
+  const { storeName } = await getStoreBranding();
   const user = await getOrRegisterUser(ctx.from!);
   const botUsername = ctx.me.username || 'TZStoreBot';
   const refLink = `https://t.me/${botUsername}?start=ref_${user.id}`;
-  const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(refLink)}&text=${encodeURIComponent('Get instant developer accounts and AI tools on TZ Store!')}`;
+  const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(refLink)}&text=${encodeURIComponent(`Get instant developer accounts and AI tools on ${storeName}!`)}`;
 
   const kb = new InlineKeyboard().url('📤 Share Link', shareUrl).row().text('🔙 Back', 'menu:home');
 
@@ -552,18 +745,22 @@ bot.callbackQuery('menu:orders', async (ctx) => {
 });
 
 bot.callbackQuery('menu:support', async (ctx) => {
-  const kb = new InlineKeyboard().url('💬 Contact Support', SUPPORT).row().text('🔙 Back', 'menu:home');
+  const { supportUrl, channelUrl } = await getStoreBranding();
+  const kb = new InlineKeyboard().url('💬 Contact Support', supportUrl).row().text('🔙 Back', 'menu:home');
+  const supportHandle = supportUrl.includes('t.me/') ? `@${supportUrl.split('t.me/')[1]}` : supportUrl;
+  const channelHandle = channelUrl.includes('t.me/') ? `@${channelUrl.split('t.me/')[1]}` : channelUrl;
   await ctx.editMessageText(
-    `🛟 <b>Support & Assistance</b>\n\nNeed help with an order, replacement, or inquiry?\nOur dedicated support team is available 24/7.\n\n💬 <b>Direct Support:</b> @TZStoreSupport\n📢 <b>Official Channel:</b> @TZStoreChannel`,
+    `🛟 <b>Support & Assistance</b>\n\nNeed help with an order, replacement, or inquiry?\nOur dedicated support team is available 24/7.\n\n💬 <b>Direct Support:</b> ${supportHandle}\n📢 <b>Official Channel:</b> ${channelHandle}`,
     { parse_mode: 'HTML', reply_markup: kb }
   );
   await ctx.answerCallbackQuery();
 });
 
 bot.callbackQuery('menu:about', async (ctx) => {
-  const kb = new InlineKeyboard().url('🌐 Visit Web Store', WEBAPP).row().text('🔙 Back', 'menu:home');
+  const { storeName } = await getStoreBranding();
+  const kb = new InlineKeyboard().url(`🌐 Visit ${storeName}`, WEBAPP).row().text('🔙 Back', 'menu:home');
   await ctx.editMessageText(
-    `🪪 <b>About TZ Store</b>\n\nTZ Store delivers instant, automated digital goods, developer accounts, and AI tool subscriptions.\n\n🌐 <b>Web Store:</b> ${WEBAPP}\n⚡ <b>Delivery:</b> 24/7 Instant Auto-Delivery\n🔒 <b>Security:</b> AES-256 Vault Encryption`,
+    `🪪 <b>About ${storeName}</b>\n\n${storeName} delivers instant, automated digital goods, developer accounts, and AI tool subscriptions.\n\n🌐 <b>Web Store:</b> ${WEBAPP}\n⚡ <b>Delivery:</b> 24/7 Instant Auto-Delivery\n🔒 <b>Security:</b> AES-256 Vault Encryption`,
     { parse_mode: 'HTML', reply_markup: kb }
   );
   await ctx.answerCallbackQuery();
@@ -648,6 +845,10 @@ bot.on('message:text', async (ctx) => {
 });
 
 bot.command('setemoji', async (ctx) => {
+  if (!isBotAdmin(ctx.from?.id)) {
+    await ctx.reply('⛔ <b>Access Denied:</b> Only store administrators can customize button emojis.', { parse_mode: 'HTML' });
+    return;
+  }
   const parts = (ctx.match || '').trim().split(/\s+/);
   const key = parts[0]?.toLowerCase();
   let emojiId = parts[1];
@@ -724,26 +925,94 @@ bot.command('orders', async (ctx) => {
 });
 
 bot.command('support', async (ctx) => {
-  const kb = new InlineKeyboard().url('💬 Contact Support', SUPPORT).row().text('🔙 Back', 'menu:home');
+  const { supportUrl, channelUrl } = await getStoreBranding();
+  const kb = new InlineKeyboard().url('💬 Contact Support', supportUrl).row().text('🔙 Back', 'menu:home');
+  const supportHandle = supportUrl.includes('t.me/') ? `@${supportUrl.split('t.me/')[1]}` : supportUrl;
+  const channelHandle = channelUrl.includes('t.me/') ? `@${channelUrl.split('t.me/')[1]}` : channelUrl;
   await ctx.reply(
-    `🛟 <b>Support & Assistance</b>\n\nNeed help with an order, replacement, or inquiry?\nOur dedicated support team is available 24/7.\n\n💬 <b>Direct Support:</b> @TZStoreSupport\n📢 <b>Official Channel:</b> @TZStoreChannel`,
+    `🛟 <b>Support & Assistance</b>\n\nNeed help with an order, replacement, or inquiry?\nOur dedicated support team is available 24/7.\n\n💬 <b>Direct Support:</b> ${supportHandle}\n📢 <b>Official Channel:</b> ${channelHandle}`,
     { parse_mode: 'HTML', reply_markup: kb }
   );
+});
+
+bot.command('about', async (ctx) => {
+  const { storeName } = await getStoreBranding();
+  const kb = new InlineKeyboard().url(`🌐 Visit ${storeName}`, WEBAPP).row().text('🔙 Back', 'menu:home');
+  await ctx.reply(
+    `🪪 <b>About ${storeName}</b>\n\n${storeName} delivers instant, automated digital goods, developer accounts, and AI tool subscriptions.\n\n🌐 <b>Web Store:</b> ${WEBAPP}\n⚡ <b>Delivery:</b> 24/7 Instant Auto-Delivery\n🔒 <b>Security:</b> AES-256 Vault Encryption`,
+    { parse_mode: 'HTML', reply_markup: kb }
+  );
+});
+
+bot.command('admin', async (ctx) => {
+  const { storeName } = await getStoreBranding();
+  await ctx.reply(
+    `ℹ️ <b>Store Operations & Management</b>\n\n` +
+    `This bot is dedicated to customer purchases and digital account deliveries.\n` +
+    `For store administration, order fulfillment, and metrics, please launch the dedicated <b>${storeName} Admin Operations Bot</b>.`,
+    { parse_mode: 'HTML' }
+  );
+});
+
+bot.command('referrals', async (ctx) => {
+  const { storeName } = await getStoreBranding();
+  const user = await getOrRegisterUser(ctx.from!);
+  const botUsername = ctx.me.username || 'TZStoreBot';
+  const refLink = `https://t.me/${botUsername}?start=ref_${user.id}`;
+  const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(refLink)}&text=${encodeURIComponent(`Get instant developer accounts and AI tools on ${storeName}!`)}`;
+
+  const kb = new InlineKeyboard().url('📤 Share Link', shareUrl).row().text('🔙 Back', 'menu:home');
+
+  await ctx.reply(
+    `🎁 <b>Referral Program</b>\n\nInvite friends and earn 5% commission on every order they place!\n\n🔗 <b>Your Referral Link:</b>\n<code>${refLink}</code>\n\n💰 <b>Total Earnings:</b> $${user.referral.toFixed(2)}`,
+    { parse_mode: 'HTML', reply_markup: kb }
+  );
+});
+
+// -------------------------------------------------------------
+// Telegram Stars Native Payment Handlers (XTR)
+// -------------------------------------------------------------
+bot.on('pre_checkout_query', async (ctx) => {
+  try {
+    await ctx.answerPreCheckoutQuery(true);
+  } catch (err) {
+    console.error('Error answering pre_checkout_query:', err);
+  }
+});
+
+bot.on(':successful_payment', async (ctx) => {
+  try {
+    const pay = ctx.message?.successful_payment;
+    if (!pay) return;
+    const intentId = String(pay.invoice_payload ?? '');
+    console.log(`[Telegram Stars] Successful payment for intent: ${intentId}, charge ID: ${pay.telegram_payment_charge_id}`);
+
+    const it = store.getIntent(intentId);
+    if (it && (it.status === 'PENDING' || it.status === 'NEEDS_REVIEW')) {
+      store.setIntent(it.id, { status: 'CONFIRMED', txHash: pay.telegram_payment_charge_id });
+      const { fulfillOrder } = await import('../lib/fulfill');
+      await fulfillOrder(it.orderId);
+      await ctx.reply(`⭐️ <b>Payment Received!</b>\n\nYour order <code>${it.orderId}</code> has been confirmed and delivered.`, { parse_mode: 'HTML' });
+    }
+  } catch (err) {
+    console.error('Error handling successful_payment:', err);
+  }
 });
 
 bot.catch((e) => console.error('Bot error:', e));
 
 bot.start({
   onStart: async (info) => {
-    console.log(`TZ Store Bot @${info.username} is running and connected!`);
+    const { storeName } = await getStoreBranding();
+    console.log(`${storeName} User Bot @${info.username} is running and connected!`);
     await bot.api.setMyCommands([
-      { command: 'start', description: 'Start Store & Profile' },
+      { command: 'start', description: 'Launch Store & Profile' },
       { command: 'products', description: 'Browse Categories & Products' },
       { command: 'deposit', description: 'Deposit Funds' },
-      { command: 'orders', description: 'View My Orders' },
-      { command: 'emojis', description: 'View Real Image Custom Emojis' },
-      { command: 'setemoji', description: 'Set Real Image Custom Emoji' },
+      { command: 'orders', description: 'View My Orders & Deliveries' },
+      { command: 'referrals', description: 'Referral Link & Earnings' },
       { command: 'support', description: 'Customer Support' },
+      { command: 'about', description: `About ${storeName}` },
     ]).catch(() => {});
   },
 });

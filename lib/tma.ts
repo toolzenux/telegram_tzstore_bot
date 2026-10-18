@@ -14,11 +14,14 @@ export function initTma() {
   } catch {}
   return w;
 }
-export function haptic(kind: 'success' | 'error' | 'warning' | 'light' = 'light') {
+export function haptic(kind: 'success' | 'error' | 'warning' | 'light' | 'medium' | 'heavy' = 'light') {
   try {
     const w = tg();
-    if (kind === 'light') w?.HapticFeedback?.impactOccurred?.('light');
-    else w?.HapticFeedback?.notificationOccurred?.(kind);
+    if (kind === 'light' || kind === 'medium' || kind === 'heavy') {
+      w?.HapticFeedback?.impactOccurred?.(kind);
+    } else {
+      w?.HapticFeedback?.notificationOccurred?.(kind);
+    }
   } catch {}
 }
 export function mainButton(text: string, onClick: () => void) {
@@ -45,5 +48,9 @@ export function tzToken(): string {
 }
 export function tzAuthHeader(): Record<string, string> {
   const t = tzToken();
-  return t ? { authorization: `Bearer ${t}` } : {};
+  const initData = initDataRaw();
+  const headers: Record<string, string> = {};
+  if (t) headers.authorization = `Bearer ${t}`;
+  if (initData) headers['x-telegram-init-data'] = initData;
+  return headers;
 }

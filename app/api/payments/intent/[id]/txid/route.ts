@@ -88,6 +88,9 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   if (check.state === 'not-found') {
     store.setIntent(it.id, { status: 'NEEDS_REVIEW' });
     store.setOrderStatus(it.orderId, 'NEEDS_REVIEW');
+    const order = store.getOrder(it.orderId);
+    const { sendAdminReviewAlert } = await import('@/lib/telegram-bot');
+    sendAdminReviewAlert(it, order, p.data.txid).catch(() => null);
   }
   if (check.state === 'no-keys') {
     return NextResponse.json({ ok: true, state: 'no-keys', intent: store.getIntent(it.id) });

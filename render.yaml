@@ -1,0 +1,58 @@
+services:
+  - type: web
+    name: tz-store
+    runtime: node
+    plan: free
+    buildCommand: npm run build
+    startCommand: npm run render:start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: DATABASE_URL
+        sync: false
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_BOT_TOKEN
+        sync: false
+      - key: ADMIN_USER_IDS
+        sync: false
+      - key: ADMIN_TG_IDS
+        sync: false
+      - key: ADMIN_NOTIFY_CHAT_ID
+        sync: false
+      - key: WEBAPP_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: BINANCE_UID
+        sync: false
+      - key: BINANCE_SPOT_API_KEY
+        sync: false
+      - key: BINANCE_SPOT_SECRET
+        sync: false
+      - key: CODES_ENC_KEY
+        sync: false
+      - key: ENABLE_STARS
+        value: "false"
+      - key: ENABLE_TRC20
+        value: "false"
+      - key: ENABLE_BEP20
+        value: "true"
+      - key: ENABLE_BTC
+        value: "false"
+      - key: ENABLE_BINANCE
+        value: "true"
+      - key: BEP20_WALLET_ADDRESS
+        value: "0x620b6207d03e59ccf1d1356f78a4f8e9078cf711"
+      - key: NEXT_PUBLIC_BEP20_WALLET_ADDRESS
+        value: "0x620b6207d03e59ccf1d1356f78a4f8e9078cf711"
+      - key: SUPPORT_URL
+        value: "https://t.me/TzStore_Support"
+      - key: NEXT_PUBLIC_SUPPORT_URL
+        value: "https://t.me/TzStore_Support"

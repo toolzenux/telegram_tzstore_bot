@@ -43,10 +43,10 @@ export default function Dashboard() {
   });
 
   const isLive = Boolean(data);
-  const revenueSeries = data?.revenueSeries?.length ? data.revenueSeries : DEMO_REVENUE;
-  const topProducts = data?.topProducts?.length ? data.topProducts : DEMO_TOP;
-  const paymentDonut = data?.paymentDonut?.length ? data.paymentDonut : DEMO_DONUT;
-  const recentOrders = data?.recentOrders?.length ? data.recentOrders : DEMO_RECENT;
+  const revenueSeries = data?.revenueSeries?.length ? data.revenueSeries : [];
+  const topProducts = data?.topProducts?.length ? data.topProducts : [];
+  const paymentDonut = data?.paymentDonut?.length ? data.paymentDonut : [];
+  const recentOrders = data?.recentOrders?.length ? data.recentOrders : [];
 
   const cards = [
     { label: 'Today Revenue', value: data ? `$${Number(data.kpis.todayRevenue).toFixed(2)}` : '$0.00', Icon: DollarSign },
@@ -57,25 +57,29 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center">
-        <h1 className="flex items-center gap-2 text-xl font-extrabold"><Activity size={20} /> Dashboard</h1>
-        <span className={`ml-3 rounded-full px-2.5 py-0.5 text-xs font-semibold ${isLive ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-          {isLive ? '🟢 Live' : 'Demo data'}
-        </span>
-        <div className="flex-1" />
-        <div className="flex gap-1 rounded-xl bg-white p-1 dark:bg-slate-900">
+      <div className="flex flex-wrap items-center justify-between gap-2.5">
+        <div className="flex items-center gap-2">
+          <h1 className="flex items-center gap-2 text-lg font-extrabold sm:text-xl"><Activity size={20} className="text-blue-600" /> Dashboard</h1>
+          <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${isLive ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/70 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/70 dark:text-amber-300'}`}>
+            {isLive ? '🟢 Live' : 'Demo data'}
+          </span>
+        </div>
+        <div className="flex gap-1 rounded-xl bg-white p-1 shadow-xs dark:bg-slate-900 dark:ring-1 dark:ring-slate-800">
           {[7, 30, 90].map((d) => (
             <button key={d} onClick={() => setDays(d)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-bold ${days === d ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
+              className={`rounded-lg px-2.5 py-1 text-xs font-bold transition sm:px-3 sm:py-1.5 ${days === d ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'}`}>
               {d}D</button>
           ))}
         </div>
       </div>
-      <div className="grid gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-4">
         {cards.map((c) => (
-          <Card key={c.label}>
-            <div className="flex items-center gap-2 text-slate-500"><c.Icon size={18} /><span className="text-xs font-medium">{c.label}</span></div>
-            <div className="mt-1 text-2xl font-extrabold">{isLoading ? <Skeleton className="h-8 w-24" /> : c.value}</div>
+          <Card key={c.label} className="p-3 sm:p-4">
+            <div className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
+              <c.Icon size={16} className="text-blue-500" />
+              <span className="truncate text-[11px] font-medium sm:text-xs">{c.label}</span>
+            </div>
+            <div className="mt-1 text-xl font-extrabold tracking-tight sm:text-2xl">{isLoading ? <Skeleton className="h-7 w-20" /> : c.value}</div>
           </Card>
         ))}
       </div>

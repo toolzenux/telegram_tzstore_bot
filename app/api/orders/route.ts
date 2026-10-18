@@ -42,7 +42,7 @@ export async function POST(req: Request) {
     }
     const order = store.createOrder({ id: newId('ord'), userTg: s?.tgId ?? 'dev-user', productId: q.productId, qty: q.qty, unitPrice: q.unitPrice, total: q.total, status: 'PENDING', createdAt: new Date().toISOString() });
     const { syncOrderToBackend } = await import('@/lib/admin-api');
-    await syncOrderToBackend({ orderNo: order.id, userTg: order.userTg, productId: order.productId, qty: order.qty, amountUsdt: order.total }).catch(() => null);
+    void syncOrderToBackend({ orderNo: order.id, userTg: order.userTg, productId: order.productId, qty: order.qty, amountUsdt: order.total }).catch(() => null);
     return NextResponse.json({ order });
   } catch (e: any) { return NextResponse.json({ error: e.message }, { status: 400 }); }
 }
@@ -57,20 +57,28 @@ export async function GET(req: Request) {
     const { sharedOrder } = await import('@/lib/admin-api');
     const dbOrder = await sharedOrder(id);
     if (dbOrder) {
-      o = {
-        id: dbOrder.id,
-        userTg: dbOrder.userTg,
-        productId: dbOrder.productId,
-        qty: dbOrder.qty,
-        unitPrice: dbOrder.unitPrice,
-        total: dbOrder.total,
-        status: dbOrder.status,
-        createdAt: dbOrder.createdAt,
-        code: dbOrder.code,
-        deliveries: dbOrder.deliveries,
-      };
-      // Cache in local store
-      try { store.createOrder(o); } catch {}
+      if (!o || dbOrder.status === 'DELIVERED') {
+        o = {
+          id: dbOrder.id,
+          userTg: dbOrder.userTg,
+          productId: dbOrder.productId,
+          qty: dbOrder.qty,
+          unitPrice: dbOrder.unitPrice,
+          total: dbOrder.total,
+          status: dbOrder.status,
+          createdAt: dbOrder.createdAt,
+          code: dbOrder.code,
+          deliveries: dbOrder.deliveries,
+        };
+        // Cache in local store
+        try {
+          if (!store.getOrder(id)) store.createOrder(o);
+          else {
+            store.setOrderStatus(o.id, o.status);
+            if (o.deliveries) store.setOrderDeliveries(o.id, o.deliveries);
+          }
+        } catch {}
+      }
       if (dbOrder.product) {
         dbProduct = dbOrder.product;
       }
@@ -79,30 +87,39 @@ export async function GET(req: Request) {
 
   if (!o) return NextResponse.json({ error: 'not found' }, { status: 404 });
 
-  const session = sessionFromRequest(req);
-  const isAdmin = requireAdminToken(req) === null || session?.role === 'ADMIN';
-  const isOwner = session && (session.tgId === o.userTg || String(session.tgId) === String(o.userTg));
-
-  // Protect sensitive order delivery info: only restrict if order has delivered credentials
-  if (o.status !== 'PENDING' && (o.deliveries?.length || o.code)) {
-    if (!isOwner && !isAdmin) {
-      if (session && String(session.tgId) !== String(o.userTg)) {
-        return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-      }
-      if (process.env.NODE_ENV === 'production' && o.userTg !== 'dev-user') {
-        // Redact secrets if accessed without valid auth
-        const safeOrder = { ...o, deliveries: undefined, code: undefined };
-        let prod: any = dbProduct;
-        if (!prod) {
-          try { prod = store.getProduct(o.productId); } catch { prod = null; }
-          if (!prod) {
-            const { sharedProduct } = await import('@/lib/admin-api');
-            prod = await sharedProduct(o.productId);
-          }
-        }
-        return NextResponse.json({ order: safeOrder, product: prod ? { id: prod.id, title: prod.title, logo: prod.logo, categorySlug: prod.categorySlug } : null });
+  let session = sessionFromRequest(req);
+  if (!session) {
+    const rawInitData = req.headers.get('x-telegram-init-data');
+    const token = process.env.BOT_TOKEN ?? '';
+    if (rawInitData && token) {
+      const { validateInitData } = await import('@/lib/telegram');
+      const { roleFor } = await import('@/lib/auth');
+      const v = validateInitData(rawInitData, token, 86400);
+      if (v.ok && v.user?.id) {
+        session = { tgId: String(v.user.id), username: v.user.username, role: roleFor(String(v.user.id)) };
       }
     }
+  }
+
+  const isAdmin = requireAdminToken(req) === null || session?.role === 'ADMIN';
+  const isOwner = Boolean(session && (session.tgId === o.userTg || String(session.tgId) === String(o.userTg))) || (process.env.NODE_ENV !== 'production' && o.userTg === 'dev-user');
+
+  // Protect sensitive order delivery info: only owner and admin can view credentials
+  if (!isOwner && !isAdmin) {
+    if (session && String(session.tgId) !== String(o.userTg) && o.userTg !== 'dev-user') {
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+    }
+    // Redact secrets if accessed without confirmed ownership/admin auth
+    const safeOrder = { ...o, deliveries: undefined, code: undefined };
+    let prod: any = dbProduct;
+    if (!prod) {
+      try { prod = store.getProduct(o.productId); } catch { prod = null; }
+      if (!prod) {
+        const { sharedProduct } = await import('@/lib/admin-api');
+        prod = await sharedProduct(o.productId);
+      }
+    }
+    return NextResponse.json({ order: safeOrder, product: prod ? { id: prod.id, title: prod.title, logo: prod.logo, categorySlug: prod.categorySlug } : null });
   }
 
   let prod: any = dbProduct;

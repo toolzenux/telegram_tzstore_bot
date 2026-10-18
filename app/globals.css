@@ -1,21 +1,61 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
 :root {
   --tg-safe-top: env(safe-area-inset-top, 0px);
   --tg-safe-bottom: env(safe-area-inset-bottom, 0px);
 }
-body {
-  background: linear-gradient(180deg, #E8F3E8 0%, #DDF0E4 60%, #D8ECDF 100%);
-  min-height: 100vh;
+
+html, body {
+  min-height: 100dvh;
   -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+  touch-action: manipulation;
 }
-.tg-card { @apply bg-white rounded-[14px] shadow-sm; }
-.tg-press:active { transform: scale(0.97); }
+
+body {
+  background: #0e1621;
+}
+
+/* Custom discreet mobile scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 9999px;
+}
+
+.tg-card {
+  @apply bg-white rounded-[16px] shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-black/[0.03];
+}
+
+.tg-press {
+  transition: transform 0.12s ease, opacity 0.12s ease;
+}
+.tg-press:active {
+  transform: scale(0.97);
+  opacity: 0.92;
+}
+
 .tg-toast {
-  position: fixed; left: 50%; transform: translateX(-50%);
-  bottom: calc(var(--tg-safe-bottom) + 84px);
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 28px;
+  max-width: min(90vw, 360px);
   z-index: 60;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
 }
-button, a { min-height: 44px; }
-button.tight, a.tight { min-height: 0; }
+
+button, a {
+  min-height: 44px;
+}
+button.tight, a.tight {
+  min-height: 0;
+}

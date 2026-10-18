@@ -2,9 +2,9 @@ import { ReactNode, useState } from 'react';
 import { X } from 'lucide-react';
 
 // shadcn-style minimal primitives (Tailwind). Consistent SaaS look.
-export function Button({ children, onClick, variant = 'primary', disabled, type = 'button', className = '' }: {
+export function Button({ children, onClick, variant = 'primary', disabled, type = 'button', className = '', title }: {
   children: ReactNode; onClick?: () => void; variant?: 'primary' | 'green' | 'ghost' | 'danger' | 'outline';
-  disabled?: boolean; type?: 'button' | 'submit'; className?: string;
+  disabled?: boolean; type?: 'button' | 'submit'; className?: string; title?: string;
 }) {
   const styles: Record<string, string> = {
     primary: 'bg-blue-600 text-white hover:bg-blue-700',
@@ -14,7 +14,7 @@ export function Button({ children, onClick, variant = 'primary', disabled, type 
     outline: 'border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800',
   };
   return (
-    <button type={type} disabled={disabled} onClick={onClick}
+    <button type={type} disabled={disabled} onClick={onClick} title={title}
       className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition disabled:opacity-50 ${styles[variant]} ${className}`}>
       {children}
     </button>

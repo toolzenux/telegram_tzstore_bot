@@ -1,8 +1,8 @@
 'use client';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
-import { Wallet, Loader2, ChevronRight, ShieldCheck } from 'lucide-react';
+import { useEffect, useState, useRef, useCallback } from 'react';
+import { Wallet, Loader2, ChevronRight, ShieldCheck, ArrowLeft, Package, ShoppingBag, ClipboardList } from 'lucide-react';
 import { Card, Skeleton, Toast, CatLogo } from '@/components/ui';
 import { backButton, haptic, tzAuthHeader } from '@/lib/tma';
 
@@ -15,11 +15,8 @@ type Method = {
 };
 
 const METHODS: Method[] = [
-  { id: 'STARS', label: 'Telegram Stars', hint: 'Recommended • instant', icon: '/logos/pay-stars.svg', badge: 'Auto' },
-  { id: 'BINANCE', label: 'Binance Pay', hint: 'UID transfer • instant', icon: '/logos/pay-binance.svg' },
-  { id: 'TRC20', label: 'USDT · TRC20', hint: 'Low fee • ~1 min', icon: '/logos/pay-tether.svg', badge: 'Auto' },
-  { id: 'BEP20', label: 'USDT · BEP20', hint: 'Low fee • ~1 min', icon: '/logos/pay-tether.svg', badge: 'Auto' },
-  { id: 'BTC', label: 'Bitcoin', hint: 'On-chain • ~10 min', icon: '/logos/pay-bitcoin.svg', badge: 'Auto' },
+  { id: 'BINANCE', label: 'Binance Pay', hint: 'UID transfer • instant', icon: '/logos/pay-binance.svg', badge: '0% Fee' },
+  { id: 'BEP20', label: 'USDT · BEP20', hint: 'BNB Smart Chain • instant', icon: '/logos/pay-tether.svg', badge: 'Auto' },
 ];
 
 const money = (n: number) =>
@@ -27,11 +24,12 @@ const money = (n: number) =>
 
 export default function Checkout({ params }: { params: { orderId: string } }) {
   const router = useRouter();
+  const qc = useQueryClient();
   const [toast, setToast] = useState<string | null>(null);
   const [paying, setPaying] = useState<string | null>(null);
-  const [binanceOpen, setBinanceOpen] = useState(false);
-  const rawUid = process.env.NEXT_PUBLIC_BINANCE_UID || '1134278389';
-  const storeUid = (rawUid && !rawUid.includes('*') && rawUid.length >= 6) ? rawUid : '1134278389';
+  const preloadedBinanceRef = useRef<any>(null);
+  const preloadedPromiseRef = useRef<Promise<any> | null>(null);
+  const preloadCacheRef = useRef<Map<string, any>>(new Map());
 
   useEffect(() => backButton(() => router.back()), [router]);
 
@@ -60,10 +58,76 @@ export default function Checkout({ params }: { params: { orderId: string } }) {
   const order = data?.order;
   const product = data?.product;
 
+  // Ultra-fast background preload for Binance Pay (0 latency instant checkout)
+  useEffect(() => {
+    if (!order?.id || order?.status !== 'PENDING') return;
+    if (preloadedBinanceRef.current) return;
+
+    preloadedPromiseRef.current = fetch('/api/payments/intent', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...tzAuthHeader() },
+      body: JSON.stringify({ orderId: order.id, provider: 'BINANCE' }),
+    })
+      .then((r) => r.json())
+      .then((j) => {
+        if (j?.intent?.id) {
+          preloadedBinanceRef.current = j.intent;
+          preloadCacheRef.current.set('BINANCE', j.intent);
+          qc.setQueryData(['intent', j.intent.id], { intent: j.intent });
+          router.prefetch(`/pay/${j.intent.id}`);
+        }
+        return j;
+      })
+      .catch(() => null);
+  }, [order?.id, order?.status, qc, router]);
+
+  // Warmup provider intent on pointer enter / touch
+  const warmProvider = useCallback((provider: string) => {
+    if (!order?.id || order?.status !== 'PENDING' || preloadCacheRef.current.has(provider)) return;
+    fetch('/api/payments/intent', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...tzAuthHeader() },
+      body: JSON.stringify({ orderId: order.id, provider }),
+    })
+      .then((r) => r.json())
+      .then((j) => {
+        if (j?.intent?.id) {
+          preloadCacheRef.current.set(provider, j.intent);
+          qc.setQueryData(['intent', j.intent.id], { intent: j.intent });
+          router.prefetch(`/pay/${j.intent.id}`);
+        }
+      })
+      .catch(() => null);
+  }, [order?.id, order?.status, qc, router]);
+
   async function pay(provider: string) {
     if (paying) return;
+    haptic('medium');
+
+    // FAST-PATH 1: Instant 0-Latency Transition if intent is already pre-generated
+    const cached = preloadCacheRef.current.get(provider) || (provider === 'BINANCE' ? preloadedBinanceRef.current : null);
+    if (cached) {
+      setPaying(provider);
+      qc.setQueryData(['intent', cached.id], { intent: cached });
+      router.push(`/pay/${cached.id}`);
+      return;
+    }
+
+    // FAST-PATH 2: If Binance background promise is in-flight, await directly without re-fetching
+    if (provider === 'BINANCE' && preloadedPromiseRef.current) {
+      setPaying('BINANCE');
+      try {
+        const j = await preloadedPromiseRef.current;
+        if (j?.intent) {
+          qc.setQueryData(['intent', j.intent.id], { intent: j.intent });
+          router.push(`/pay/${j.intent.id}`);
+          return;
+        }
+      } catch {}
+    }
+
+    // Standard fallback path with immediate visual feedback
     setPaying(provider);
-    haptic('light');
     try {
       const r = await fetch('/api/payments/intent', {
         method: 'POST',
@@ -74,7 +138,11 @@ export default function Checkout({ params }: { params: { orderId: string } }) {
       if (!r.ok) {
         setToast(j.error ?? 'Payment failed');
         haptic('error');
+        setPaying(null);
         return;
+      }
+      if (j.intent) {
+        qc.setQueryData(['intent', j.intent.id], { intent: j.intent });
       }
       if (provider === 'STARS' && j.invoiceLink) {
         const w = (window as any)?.Telegram?.WebApp;
@@ -83,7 +151,9 @@ export default function Checkout({ params }: { params: { orderId: string } }) {
       } else {
         router.push(`/pay/${j.intent.id}`);
       }
-    } finally {
+    } catch {
+      setToast('Network error, please retry');
+      haptic('error');
       setPaying(null);
     }
   }
@@ -92,37 +162,41 @@ export default function Checkout({ params }: { params: { orderId: string } }) {
     return (
       <main className="space-y-3 pt-4">
         <Card className="p-5 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-50 text-2xl">
-            📦
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-500">
+            <Package size={24} />
           </div>
-          <h1 className="mt-3 text-[17px] font-bold text-gray-900">Order not found</h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <h1 className="mt-3 text-[16px] font-bold text-gray-900">Order Not Found</h1>
+          <p className="mt-1 text-xs text-gray-500">
             This order does not exist or may have expired.
           </p>
           <div className="mt-4 flex flex-col gap-2">
             <button
               onClick={() => router.push('/home')}
-              className="w-full rounded-[14px] bg-[#57C25E] px-4 py-3 text-[15px] font-bold text-white shadow-sm transition hover:brightness-95 tg-press"
+              className="flex items-center justify-center gap-2 w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-black"
             >
-              🛍️ Browse Products
+              <ShoppingBag size={15} />
+              <span>Browse Products</span>
             </button>
             <button
               onClick={() => router.push('/orders')}
-              className="w-full rounded-[14px] bg-gray-100 px-4 py-3 text-[15px] font-bold text-gray-800 transition hover:bg-gray-200 tg-press"
+              className="flex items-center justify-center gap-2 w-full rounded-xl bg-slate-100 px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-200"
             >
-              📋 My Orders
+              <ClipboardList size={15} />
+              <span>My Orders</span>
             </button>
           </div>
         </Card>
         <button
           onClick={() => router.back()}
-          className="w-full rounded-[14px] bg-red-500 px-4 py-3 text-[15px] font-bold text-white"
+          className="flex items-center justify-center gap-1.5 w-full rounded-xl bg-white border border-slate-200 py-3 text-xs font-semibold text-slate-600 shadow-sm transition active:scale-95"
         >
-          ⬅️ Back
+          <ArrowLeft size={14} />
+          <span>Back</span>
         </button>
       </main>
     );
   }
+
   if (isLoading || !order)
     return (
       <main className="space-y-3 pt-4">
@@ -172,24 +246,29 @@ export default function Checkout({ params }: { params: { orderId: string } }) {
           <Wallet size={16} className="text-[#4A90D9]" />
           <h2 className="text-[15px] font-bold text-gray-900">Payment method</h2>
         </div>
-        <p className="mt-1 text-xs text-gray-500">
-          ⚡ All deposit methods are auto-detected &amp; instant
+        <p className="mt-1 text-xs text-slate-500">
+          All payment methods are verified and processed instantly
         </p>
 
         <ul className="mt-3 space-y-2">
           {METHODS.map((m) => {
             const active = paying === m.id;
-            const open = m.id === 'BINANCE' && binanceOpen;
+            const isBinance = m.id === 'BINANCE';
             return (
               <li key={m.id}>
                 <button
-                  onClick={() =>
-                    m.id === 'BINANCE' ? setBinanceOpen((v) => !v) : pay(m.id)
-                  }
-                  disabled={paying !== null}
-                  className={`flex w-full items-center gap-3 rounded-[14px] border px-3.5 py-3 text-left transition tg-press disabled:opacity-70 ${
-                    open ? 'border-[#4A90D9] bg-blue-50/50' : 'border-gray-100 bg-gray-50'
-                  }`}
+                  type="button"
+                  onClick={() => pay(m.id)}
+                  onPointerDown={() => {
+                    haptic('light');
+                    warmProvider(m.id);
+                  }}
+                  onMouseEnter={() => warmProvider(m.id)}
+                  disabled={paying !== null && paying !== m.id}
+                  style={{ touchAction: 'manipulation' }}
+                  className={`flex w-full items-center gap-3 rounded-[14px] border border-gray-100 bg-gray-50 px-3.5 py-3 text-left transition-all duration-75 tg-press hover:bg-gray-100 active:scale-[0.98] ${
+                    isBinance ? 'hover:border-amber-300 active:bg-amber-50/70 active:border-amber-400' : ''
+                  } ${active ? 'bg-amber-50/70 border-amber-300 ring-1 ring-amber-300' : ''} disabled:opacity-70`}
                 >
                   <img
                     src={m.icon}
@@ -211,34 +290,11 @@ export default function Checkout({ params }: { params: { orderId: string } }) {
                     <span className="block truncate text-xs text-gray-500">{m.hint}</span>
                   </span>
                   {active ? (
-                    <Loader2 size={18} className="shrink-0 animate-spin text-[#4A90D9]" />
+                    <Loader2 size={18} className="shrink-0 animate-spin text-amber-500" />
                   ) : (
-                    <ChevronRight size={18} className="shrink-0 text-gray-300" />
+                    <ChevronRight size={18} className={`shrink-0 transition-transform ${isBinance ? 'text-gray-400 group-hover:translate-x-0.5' : 'text-gray-300'}`} />
                   )}
                 </button>
-
-                {open && (
-                  <div className="mt-2 rounded-[14px] border border-[#4A90D9]/30 bg-blue-50/40 p-3">
-                    <p className="rounded-[10px] bg-white p-2.5 text-[13px] text-gray-700">
-                      📩 Send <b>exactly {money(order.total)}</b> to store UID:{' '}
-                      <code className="font-bold text-gray-900">{storeUid}</code>{' '}
-                      <button
-                        type="button"
-                        onClick={() => { navigator.clipboard?.writeText(storeUid); setToast('Store UID copied'); }}
-                        className="tight ml-1 text-[#4A90D9] underline"
-                      >
-                        Copy
-                      </button>
-                    </p>
-                    <button
-                      onClick={() => pay('BINANCE')}
-                      disabled={paying !== null}
-                      className="mt-2.5 w-full rounded-[12px] bg-[#4A90D9] px-4 py-3 text-sm font-bold text-white transition tg-press disabled:opacity-50"
-                    >
-                      {paying === 'BINANCE' ? 'Creating…' : `Confirm • ${money(order.total)}`}
-                    </button>
-                  </div>
-                )}
               </li>
             );
           })}
@@ -251,8 +307,15 @@ export default function Checkout({ params }: { params: { orderId: string } }) {
         </p>
       </Card>
 
+      <button
+        onClick={() => { haptic('light'); router.back(); }}
+        className="w-full flex items-center justify-center gap-1.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 py-3 text-xs font-semibold text-slate-600 shadow-sm transition active:scale-95"
+      >
+        <ArrowLeft size={14} />
+        <span>Back</span>
+      </button>
+
       <Toast msg={toast} />
-      <button onClick={() => router.back()} className="w-full rounded-[14px] bg-red-500 px-4 py-3 text-[15px] font-bold text-white">⬅️ Back</button>
     </main>
   );
 }

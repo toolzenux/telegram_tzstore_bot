@@ -2,13 +2,14 @@ export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { store } from '@/lib/store';
-import { vaultEncrypt } from '@/lib/vault-crypto';
+import { vaultEncrypt, parseCredentialLine } from '@/lib/vault-crypto';
 import { requireAdminToken } from '@/lib/admin-auth';
+import { db } from '@/lib/db';
 
 // Delivery vault admin API (proxied by admin panel as /tz-api/admin/vault).
 // GET ?productId= — rows with decrypted passwords (local admin only).
 // POST { productId, login, password } — add one row.
-// POST { productId, codes } — bulk import, one `login | password` per line.
+// POST { productId, codes } — bulk import, supports `login | pass`, `login:pass`, `login----pass`, CSV.
 // DELETE { id } — remove an AVAILABLE row.
 export async function GET(req: Request) {
   const denied = requireAdminToken(req);
@@ -29,18 +30,65 @@ export async function POST(req: Request) {
     codes: z.string().optional(),
   }).safeParse(j);
   if (!p.success) return NextResponse.json({ error: p.error.flatten() }, { status: 400 });
+
   if (p.data.codes) {
     const lines = p.data.codes.split('\n').map((s) => s.trim()).filter(Boolean);
-    const rows = lines
-      .map((line) => line.split(/\s*[|,;\t]\s*/))
-      .filter((parts) => parts.length >= 2 && parts[0] && parts[1])
-      .map((parts) => ({ login: parts[0].trim(), passwordEnc: vaultEncrypt(parts.slice(1).join(' ').trim()) }));
-    if (!rows.length) return NextResponse.json({ error: 'no valid rows — use one `login | password` per line' }, { status: 400 });
+    const parsed = lines.map(parseCredentialLine);
+    const valid = parsed.filter((r): r is { login: string; password: string } => !!r);
+    const skipped = lines.length - valid.length;
+    if (!valid.length) {
+      return NextResponse.json({
+        error: 'No valid account credentials detected. Please use format: login | password or login:password (one per line)',
+      }, { status: 400 });
+    }
+    const rows = valid.map((r) => ({
+      login: r.login,
+      passwordEnc: vaultEncrypt(r.password),
+    }));
     const imported = store.vaultAdd(p.data.productId, rows);
-    return NextResponse.json({ ok: true, imported, skipped: lines.length - rows.length }, { status: 201 });
+
+    // Sync to Prisma StockItem if database is connected
+    const prisma = db();
+    if (prisma) {
+      try {
+        const prod = await prisma.product.findUnique({ where: { id: p.data.productId } });
+        if (prod) {
+          await prisma.stockItem.createMany({
+            data: valid.map((r) => ({
+              productId: p.data.productId,
+              data: `${r.login}:${r.password}`,
+              isSold: false,
+            })),
+          });
+        }
+      } catch (err) {
+        console.warn('Prisma stockItem sync warning:', err);
+      }
+    }
+
+    return NextResponse.json({ ok: true, imported, skipped }, { status: 201 });
   }
+
   if (!p.data.login || !p.data.password) return NextResponse.json({ error: 'login and password required' }, { status: 400 });
   const imported = store.vaultAdd(p.data.productId, [{ login: p.data.login.trim(), passwordEnc: vaultEncrypt(p.data.password) }]);
+
+  // Sync single to Prisma
+  const prisma = db();
+  if (prisma) {
+    try {
+      const prod = await prisma.product.findUnique({ where: { id: p.data.productId } });
+      if (prod) {
+        await prisma.stockItem.create({
+          data: {
+            productId: p.data.productId,
+            data: `${p.data.login.trim()}:${p.data.password}`,
+            isSold: false,
+          },
+        });
+      }
+    } catch {}
+  }
+
   return NextResponse.json({ ok: true, imported }, { status: 201 });
 }
 

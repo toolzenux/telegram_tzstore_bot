@@ -1,12 +1,11 @@
 import crypto from 'node:crypto';
 import { db } from '@/lib/db';
 
-// Server-side Binance check for the website deposit flow (personal account).
-// Looks up the TxID in our Spot USDT deposit history or Binance Pay transactions.
-export async function checkTxidOnBinance(
-  txid: string,
-  expectedAmount?: number,
-): Promise<{ state: 'matched' | 'not-found' | 'no-keys'; txid?: string; amount?: number; checked?: number; reason: string }> {
+let cachedKeys: { key: string; secret: string; exp: number } | null = null;
+async function getBinanceKeys(): Promise<{ key: string; secret: string }> {
+  if (cachedKeys && Date.now() < cachedKeys.exp) {
+    return cachedKeys;
+  }
   let key = process.env.BINANCE_SPOT_API_KEY ?? '';
   let secret = process.env.BINANCE_SPOT_SECRET ?? '';
 
@@ -27,6 +26,17 @@ export async function checkTxidOnBinance(
       }
     } catch {}
   }
+  cachedKeys = { key, secret, exp: Date.now() + 300_000 };
+  return cachedKeys;
+}
+
+// Server-side Binance check for the website deposit flow (personal account).
+// Looks up the TxID in our Spot USDT deposit history or Binance Pay transactions.
+export async function checkTxidOnBinance(
+  txid: string,
+  expectedAmount?: number,
+): Promise<{ state: 'matched' | 'not-found' | 'no-keys'; txid?: string; amount?: number; checked?: number; reason: string }> {
+  const { key, secret } = await getBinanceKeys();
 
   if (!key || !secret) return { state: 'no-keys', reason: 'Auto-check not configured — admin will verify manually.' };
   const needle = txid.trim().toLowerCase();
@@ -97,28 +107,38 @@ export async function checkTxidOnBinance(
   }
 }
 
+let cachedCredited: { set: Set<string>; exp: number } | null = null;
+async function getCreditedTxids(): Promise<Set<string>> {
+  if (cachedCredited && Date.now() < cachedCredited.exp) {
+    return new Set(cachedCredited.set);
+  }
+  const set = new Set<string>();
+  if (!process.env.VITEST) {
+    try {
+      const prisma = db();
+      if (prisma) {
+        const creditedOrders = await prisma.order.findMany({
+          where: { paymentStatus: 'PAID', txid: { not: null } },
+          select: { txid: true, binancePayOrderNo: true },
+        });
+        for (const o of creditedOrders) {
+          if (o.txid) set.add(o.txid.toLowerCase());
+          if (o.binancePayOrderNo) set.add(o.binancePayOrderNo.toLowerCase());
+        }
+      }
+    } catch {}
+  }
+  cachedCredited = { set, exp: Date.now() + 60_000 };
+  return new Set(set);
+}
+
 // Auto-detect recent Binance payments for an intent without manual TxID entry
 export async function autoMatchBinancePayment(
   expectedAmount: number,
   sinceMs?: number,
   excludeTxids: string[] = [],
 ): Promise<{ state: 'matched' | 'not-found' | 'no-keys'; txid?: string; amount?: number; reason: string }> {
-  let key = process.env.BINANCE_SPOT_API_KEY ?? '';
-  let secret = process.env.BINANCE_SPOT_SECRET ?? '';
-
-  if (!process.env.VITEST) {
-    try {
-      const prisma = db();
-      if (prisma) {
-        const [dbKey, dbSecret] = await Promise.all([
-          prisma.setting.findUnique({ where: { key: 'binanceSpotApiKey' } }),
-          prisma.setting.findUnique({ where: { key: 'binanceSpotSecret' } }),
-        ]);
-        if (typeof dbKey?.value === 'string' && dbKey.value.trim().length > 10) key = dbKey.value.trim();
-        if (typeof dbSecret?.value === 'string' && dbSecret.value.trim().length > 10) secret = dbSecret.value.trim();
-      }
-    } catch {}
-  }
+  const { key, secret } = await getBinanceKeys();
 
   if (!key || !secret) return { state: 'no-keys', reason: 'Auto-check not configured' };
 
@@ -127,23 +147,9 @@ export async function autoMatchBinancePayment(
     const qs = new URLSearchParams({ timestamp, recvWindow: '10000' }).toString();
     const sig = crypto.createHmac('sha256', secret).update(qs).digest('hex');
 
-    // Fetch already credited TxIDs
-    const alreadyCredited = new Set(excludeTxids.map(t => t.toLowerCase()));
-    if (!process.env.VITEST) {
-      try {
-        const prisma = db();
-        if (prisma) {
-          const creditedOrders = await prisma.order.findMany({
-            where: { paymentStatus: 'PAID', txid: { not: null } },
-            select: { txid: true, binancePayOrderNo: true },
-          });
-          for (const o of creditedOrders) {
-            if (o.txid) alreadyCredited.add(o.txid.toLowerCase());
-            if (o.binancePayOrderNo) alreadyCredited.add(o.binancePayOrderNo.toLowerCase());
-          }
-        }
-      } catch {}
-    }
+    // Fetch already credited TxIDs from memory cache
+    const alreadyCredited = await getCreditedTxids();
+    for (const t of excludeTxids) alreadyCredited.add(t.toLowerCase());
 
     // 1. Check Binance Pay
     try {

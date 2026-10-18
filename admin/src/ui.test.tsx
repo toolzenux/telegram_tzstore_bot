@@ -64,6 +64,6 @@ describe('Layout nav by role', () => {
   it('SUPPORT does not see Admins & Audit', () => {
     shell('SUPPORT', 's@x.io');
     expect(screen.queryByText('Admins & Audit')).toBeNull();
-    expect(screen.getByText('Dashboard')).toBeTruthy();
+    expect(screen.getAllByText('Dashboard')[0]).toBeTruthy();
   });
 });

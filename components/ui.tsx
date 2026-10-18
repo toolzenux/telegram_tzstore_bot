@@ -17,7 +17,13 @@ export function Skeleton({ className }: { className?: string }) {
 }
 export function Toast({ msg }: { msg: string | null }) {
   if (!msg) return null;
-  return <div className="tg-toast rounded-full bg-black/85 px-4 py-2 text-sm text-white">{msg}</div>;
+  return (
+    <div className="pointer-events-none fixed inset-x-0 bottom-7 z-50 flex justify-center px-4 animate-in fade-in slide-in-from-bottom-2 duration-150">
+      <div className="max-w-[360px] rounded-2xl bg-black/90 px-4 py-2.5 text-center text-xs sm:text-sm font-medium leading-snug text-white shadow-2xl backdrop-blur-md">
+        {msg}
+      </div>
+    </div>
+  );
 }
 export function PrimaryButton({ children, onClick, disabled }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean }) {
   return (

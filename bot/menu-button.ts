@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import https from 'node:https';
 import { Bot, InlineKeyboard } from 'grammy';
 
 if (!process.env.BOT_TOKEN) {
@@ -20,24 +21,39 @@ if (!process.env.BOT_TOKEN) {
   } catch {}
 }
 
-const bot = new Bot(process.env.BOT_TOKEN || 'test-token');
-const URL = process.env.WEBAPP_URL || 'https://merry-gelato-5debd2.netlify.app';
+const ipv4Agent = new https.Agent({ family: 4, keepAlive: true });
+const bot = new Bot(process.env.BOT_TOKEN || 'test-token', {
+  client: {
+    baseFetchConfig: {
+      agent: ipv4Agent,
+      compress: true,
+    },
+  },
+});
+const URL = process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
 
 async function initMenuButton() {
   if (!process.env.BOT_TOKEN) {
     console.error('BOT_TOKEN is not defined');
     return;
   }
-  await bot.api.setChatMenuButton({ menu_button: { type: 'web_app', text: 'Open Store', web_app: { url: URL } } });
-  console.log(`Menu button set to: ${URL}`);
+  if (URL.startsWith('https://')) {
+    await bot.api.setChatMenuButton({ menu_button: { type: 'web_app', text: 'Open Store', web_app: { url: URL } } });
+    console.log(`Menu button set to: ${URL}`);
+  } else {
+    console.log(`Note: URL ${URL} is HTTP. Telegram Web App menu buttons require an HTTPS URL.`);
+  }
 }
 
 if (require.main === module || !module.parent) {
   initMenuButton().catch(console.error);
 }
 export async function restockBroadcast(chatId: string | number, productId: string, title: string, qty: number, price: string) {
+  const buyBtn = URL.startsWith('https://')
+    ? { text: 'Buy Now', web_app: { url: `${URL}/p/${productId}?startapp=restock_${productId}` } }
+    : { text: 'Buy Now', url: `${URL}/p/${productId}?startapp=restock_${productId}` };
   await bot.api.sendMessage(chatId, `🎁 Restocked!\n${title}\n✅ Available: ${qty}\n💎 Price: ${price}`, {
-    reply_markup: new InlineKeyboard().webApp('Buy Now', `${URL}/p/${productId}?startapp=restock_${productId}`),
+    reply_markup: new InlineKeyboard().row(buyBtn),
   });
 }
 // Deep links: ${URL}?startapp=product_<id> | restock_<id> | order_<id>
