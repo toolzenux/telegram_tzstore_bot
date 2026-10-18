@@ -46,6 +46,10 @@ export default function Settings() {
         const value = parseJson.includes(k) ? JSON.parse(raw || '{}') : (isNaN(Number(raw)) || raw === '' ? raw : Number(raw));
         await api('/api/settings', { method: 'PUT', body: JSON.stringify({ key: k, value }) });
       }
+      if (keys.includes('storeName')) {
+        const newName = val('storeName');
+        window.dispatchEvent(new CustomEvent('tz:storeNameChanged', { detail: { storeName: newName } }));
+      }
       toast('✅ Settings saved successfully'); setForm({}); settings.refetch();
     } catch (e) { toast(e instanceof Error ? e.message : 'failed'); }
   }

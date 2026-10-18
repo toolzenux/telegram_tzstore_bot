@@ -26,25 +26,57 @@ function Guard({ children, roles }: { children: JSX.Element; roles?: string[] })
   const [loading, setLoading] = useState(!admin);
   useEffect(() => {
     if (admin) return;
-    const tgInitData = typeof window !== 'undefined' ? (window as any).Telegram?.WebApp?.initData : null;
-    if (!localStorage.getItem('tz_access') && tgInitData) {
-      post('/api/admin/auth/telegram', { initData: tgInitData })
-        .then((res: any) => {
+    const tg = typeof window !== 'undefined' ? (window as any).Telegram?.WebApp : null;
+    const tgInitData = tg?.initData;
+
+    const authenticate = async () => {
+      // 0. Check direct token in URL query (e.g. ?token=... or ?auth_token=...)
+      if (typeof window !== 'undefined') {
+        try {
+          const searchParams = new URLSearchParams(window.location.search);
+          const directToken = searchParams.get('token') || searchParams.get('auth_token');
+          if (directToken) {
+            localStorage.setItem('tz_access', directToken);
+          }
+        } catch {}
+      }
+
+      // 1. If inside Telegram with initData, authenticate directly with Telegram
+      if (tgInitData) {
+        try {
+          const res: any = await post('/api/admin/auth/telegram', { initData: tgInitData });
           if (res?.accessToken) {
             localStorage.setItem('tz_access', res.accessToken);
             if (res.refreshToken) localStorage.setItem('tz_refresh', res.refreshToken);
             setAdmin(res.admin);
+            setLoading(false);
+            return;
           }
-        })
-        .catch(() => null)
-        .finally(() => setLoading(false));
-      return;
-    }
-    if (!localStorage.getItem('tz_access')) { setLoading(false); return; }
-    get('/api/auth/me')
-      .then((me) => setAdmin(me as never))
-      .catch(() => null)
-      .finally(() => setLoading(false));
+        } catch (e) {
+          console.warn('[Guard] Telegram auth failed, checking stored token:', e);
+        }
+      }
+
+      // 2. Check existing access token
+      const existing = localStorage.getItem('tz_access');
+      if (existing) {
+        try {
+          const me = await get('/api/auth/me');
+          if (me) {
+            setAdmin(me as never);
+            setLoading(false);
+            return;
+          }
+        } catch {
+          localStorage.removeItem('tz_access');
+          localStorage.removeItem('tz_refresh');
+        }
+      }
+
+      setLoading(false);
+    };
+
+    authenticate();
   }, [admin, setAdmin]);
   if (loading) return <div className="p-8 text-sm">Loading…</div>;
   if (!useStore.getState().admin) return <Navigate to="/login" replace />;
@@ -64,6 +96,7 @@ export default function App() {
             <Route path="/login" element={<Login />} />
             {/* Dedicated Telegram Admin Mobile App */}
             <Route path="/mobile" element={<Guard><MobileAdminApp /></Guard>} />
+            <Route path="/mobile/*" element={<Guard><MobileAdminApp /></Guard>} />
             {/* Desktop Web Admin Dashboard */}
             <Route element={<Guard><Layout /></Guard>}>
               <Route path="/" element={<Dashboard />} />

@@ -2,6 +2,7 @@
 // PostgreSQL (Supabase) via Prisma directly so admin edits appear instantly
 // without HTTP roundtrips. Falls back to local demo store if DB is down.
 import { db } from './db';
+import { store } from './store';
 
 const BASE = process.env.ADMIN_API_URL ?? process.env.NEXT_PUBLIC_ADMIN_API_URL ?? '';
 
@@ -64,9 +65,9 @@ export async function preloadAllProducts(): Promise<void> {
         categorySlug: slug,
         title: p.name,
         desc: p.description,
-        contents: p.description,
+        contents: p.deliveryTemplate || p.description,
         priceUsdt: Number(p.priceUsdt),
-        tiers: [] as Array<{ minQty: number; unitPrice: number }>,
+        tiers: store.getTiers(p.id) || [],
         stock,
         status: (stock > 0 ? 'ACTIVE' : 'OOS') as 'ACTIVE' | 'OOS',
         logo: LOGO_OVERRIDES[slug] ?? `/logos/${slug}.svg`,

@@ -411,8 +411,8 @@ bot.callbackQuery('menu:home', async (ctx) => {
   await ctx.editMessageText(formatWelcomeText(user.name, user.id, user.balance, user.referral), {
     parse_mode: 'HTML',
     reply_markup: await mainMenu(),
-  });
-  await ctx.answerCallbackQuery();
+  }).catch(() => {});
+  await ctx.answerCallbackQuery().catch(() => {});
 });
 
 bot.callbackQuery('menu:products', async (ctx) => {

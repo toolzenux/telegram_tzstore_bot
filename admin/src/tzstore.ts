@@ -1,11 +1,16 @@
 // TZ Store live storefront data (Next.js :3000) via same-origin vite proxy /tz-api.
 // No auth needed — Next.js admin routes are local-only.
 export const STORE_ORIGIN =
-  (import.meta as unknown as { env: Record<string, string> }).env?.VITE_STORE_URL ?? 'http://localhost:3000';
+  typeof window !== 'undefined' && window.location.port === '5173'
+    ? 'http://localhost:3000'
+    : '';
+
 export const tzLogoUrl = (logo?: string) => {
   if (!logo) return '';
   if (/^(https?:|data:|blob:)/.test(logo)) return logo;
-  return `${STORE_ORIGIN}${logo.startsWith('/') ? '' : '/'}${logo}`;
+  const rel = logo.startsWith('/') ? logo : `/${logo}`;
+  if (STORE_ORIGIN) return `${STORE_ORIGIN}${rel}`;
+  return rel;
 };
 export type TzCategory = { slug: string; name: string; emoji?: string; sort?: number; logo?: string };
 export type TzProduct = {
@@ -47,8 +52,20 @@ export const tzAddStock = (productId: string, qty: number) =>
   tzFetch('/admin/products', { method: 'PATCH', body: JSON.stringify({ productId, addStock: qty }) });
 export const tzImportCodes = (productId: string, codes: string) =>
   tzFetch('/admin/codes/import', { method: 'POST', body: JSON.stringify({ productId, codes }) }) as Promise<{ ok: boolean; imported: number }>;
-export const tzCreateProduct = (body: { title: string; categorySlug: string; priceUsdt: number; desc?: string; contents?: string; stock?: number; logo?: string; tiers?: Array<{ minQty: number; unitPrice: number }>; sortOrder?: number }) =>
-  tzFetch('/admin/products', { method: 'POST', body: JSON.stringify(body) }) as Promise<{ ok: boolean; product: TzProduct }>;
+export const tzCreateProduct = (body: {
+  title: string;
+  categorySlug: string;
+  priceUsdt: number;
+  desc?: string;
+  contents?: string;
+  stock?: number;
+  logo?: string;
+  tiers?: Array<{ minQty: number; unitPrice: number }>;
+  sortOrder?: number;
+  deliveryMode?: 'AUTO' | 'MANUAL';
+  initialAccounts?: string;
+}) =>
+  tzFetch('/admin/products', { method: 'POST', body: JSON.stringify(body) }) as Promise<{ ok: boolean; product: TzProduct; importedAccounts?: number }>;
 export const tzCreateCategory = (name: string) =>
   tzFetch('/admin/categories', { method: 'POST', body: JSON.stringify({ name }) }) as Promise<{ ok: boolean; category: TzCategory }>;
 export const tzReorderCategories = (orderedSlugs: string[]) =>

@@ -37,8 +37,9 @@ export async function POST(req: Request) {
       const sp = await sharedProduct(p.data.productId);
       if (!sp) return NextResponse.json({ error: 'unknown product' }, { status: 400 });
       if (sp.stock <= 0) return NextResponse.json({ error: 'out of stock' }, { status: 400 });
-      if (p.data.qty > sp.stock) return NextResponse.json({ error: 'not enough stock' }, { status: 400 });
-      q = { productId: sp.id, qty: p.data.qty, unitPrice: sp.priceUsdt, total: Math.round(sp.priceUsdt * p.data.qty * 100) / 100 };
+      const { unitPriceFor } = await import('@/lib/seed-data');
+      const unit = sp.tiers && sp.tiers.length ? unitPriceFor(sp as any, p.data.qty) : Number(sp.priceUsdt);
+      q = { productId: sp.id, qty: p.data.qty, unitPrice: unit, total: Math.round(unit * p.data.qty * 100) / 100 };
     }
     const order = store.createOrder({ id: newId('ord'), userTg: s?.tgId ?? 'dev-user', productId: q.productId, qty: q.qty, unitPrice: q.unitPrice, total: q.total, status: 'PENDING', createdAt: new Date().toISOString() });
     const { syncOrderToBackend } = await import('@/lib/admin-api');

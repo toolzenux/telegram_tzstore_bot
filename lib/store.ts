@@ -192,6 +192,12 @@ export const store = {
     s.priceOv[id] = price;
     save(s);
   },
+  getTiers: (id: string): BulkTier[] => {
+    const s = load();
+    const p = allSeedAndCustom(s).find((x) => x.id === id);
+    if (!p) return s.tiersOv[id] ?? [];
+    return effTiers(s, p);
+  },
   setTiers: (id: string, tiers: BulkTier[]) => {
     const s = load();
     const seed = PRODUCTS.find((x) => x.id === id);
@@ -204,7 +210,7 @@ export const store = {
   addStock: (id: string, n: number) => { const s = load(); const base = allSeedAndCustom(s).find((x) => x.id === id)?.stock ?? 0; s.stockOv[id] = (s.stockOv[id] ?? base) + n; save(s); },
   addProduct: (p: { title: string; categorySlug: string; priceUsdt: number; desc?: string; contents?: string; stock?: number; logo?: string; tiers?: BulkTier[]; sortOrder?: number }) => {
     const s = load();
-    const id = `p-custom-${Date.now().toString(36)}`;
+    const id = `p-custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
     const sortOrder = p.sortOrder !== undefined ? p.sortOrder : (allSeedAndCustom(s).length + 1);
     const item: SeedProduct = {
       id, categorySlug: p.categorySlug, title: p.title,
@@ -221,7 +227,7 @@ export const store = {
     return { ...item, logo: effLogo(s, item), tiers: effTiers(s, item), sortOrder };
   },
   setLogo: (id: string, logo: string) => { const s = load(); s.logoOv[id] = logo; save(s); },
-  updateProduct: (id: string, patch: { title?: string; categorySlug?: string; desc?: string; contents?: string; logo?: string; tiers?: BulkTier[]; sortOrder?: number }) => {
+  updateProduct: (id: string, patch: { title?: string; categorySlug?: string; desc?: string; contents?: string; logo?: string; tiers?: BulkTier[]; sortOrder?: number; stock?: number }) => {
     const s = load();
     const target = allSeedAndCustom(s).find((x) => x.id === id);
     if (!target) throw new Error('unknown product');
@@ -232,8 +238,10 @@ export const store = {
     const cu = s.custom.find((x) => x.id === id);
     if (patch.title !== undefined) { s.titleOv[id] = patch.title; if (cu) cu.title = patch.title; }
     if (patch.desc !== undefined) { s.descOv[id] = patch.desc; s.contentsOv[id] = patch.contents ?? patch.desc; if (cu) { cu.desc = patch.desc; cu.contents = patch.contents ?? patch.desc; } }
+    if (patch.contents !== undefined) { s.contentsOv[id] = patch.contents; if (cu) cu.contents = patch.contents; }
     if (patch.categorySlug !== undefined) { s.catOv[id] = patch.categorySlug; if (cu) cu.categorySlug = patch.categorySlug; }
     if (patch.logo !== undefined) { s.logoOv[id] = patch.logo; }
+    if (patch.stock !== undefined) { s.stockOv[id] = patch.stock; if (cu) cu.stock = patch.stock; if (target) target.stock = patch.stock; }
     if (patch.tiers !== undefined) { s.tiersOv[id] = patch.tiers; if (cu) cu.tiers = patch.tiers; if (target) target.tiers = patch.tiers; }
     if (patch.sortOrder !== undefined) {
       if (!s.sortOrderOv) s.sortOrderOv = {};

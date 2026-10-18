@@ -10,6 +10,7 @@ import { Bot, InlineKeyboard } from 'grammy';
 import { PrismaClient } from '@prisma/client';
 import { store } from '../lib/store';
 import { fulfillOrder } from '../lib/fulfill';
+import { signAccess } from '../lib/admin-jwt';
 
 // Load .env
 try {
@@ -43,8 +44,14 @@ export const adminBot = token
     })
   : null;
 
-const WEBAPP = process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
-const ADMIN_PORTAL_URL = `${WEBAPP}/admin/mobile`;
+function getAdminPortalUrl(): string {
+  const base = process.env.ADMIN_WEBAPP_URL || process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
+  return `${base.replace(/\/+$/, '')}/admin/mobile`;
+}
+
+function getDirectAdminToken(tgId: number | string): string {
+  return signAccess(`admin_tg_${tgId}`, 'SUPER_ADMIN', '7d');
+}
 function getAuthorizedAdminIds(): Set<string> {
   return new Set(
     [
@@ -98,20 +105,41 @@ async function isAuthorizedAdmin(telegramId: number | string): Promise<boolean> 
   return false;
 }
 
-function adminPortalBtn(text: string, path = '') {
-  const url = path ? `${ADMIN_PORTAL_URL}${path.startsWith('/') ? path : '/' + path}` : ADMIN_PORTAL_URL;
-  if (url.startsWith('https://')) {
-    return { text, web_app: { url } };
+function adminPortalBtn(text: string, path = '', adminTgId?: number | string) {
+  const portalUrl = getAdminPortalUrl();
+  const tokenParam = adminTgId ? `token=${getDirectAdminToken(adminTgId)}` : '';
+  
+  let tabName = '';
+  if (path.includes('order')) tabName = 'orders';
+  else if (path.includes('payment') || path.includes('deposit')) tabName = 'deposits';
+  else if (path.includes('product')) tabName = 'products';
+  else if (path.includes('categor')) tabName = 'categories';
+  else if (path.includes('user')) tabName = 'users';
+  else if (path.includes('setting')) tabName = 'settings';
+
+  const params: string[] = [];
+  if (tabName) params.push(`tab=${tabName}`);
+  if (tokenParam) params.push(tokenParam);
+
+  const fullUrl = params.length > 0 ? `${portalUrl}?${params.join('&')}` : portalUrl;
+
+  if (fullUrl.startsWith('https://')) {
+    return { text, web_app: { url: fullUrl } };
   }
   // Telegram API rejects http://localhost or private URLs in inline url buttons.
   return { text: `${text} (Local)`, callback_data: 'admin:local_url' };
 }
 
-function adminDashboardKeyboard(pendingOrdersCount = 0, pendingDepositsCount = 0) {
+function adminDashboardKeyboard(pendingOrdersCount = 0, pendingDepositsCount = 0, adminTgId?: number | string) {
   const kb = new InlineKeyboard();
+  const portalUrl = getAdminPortalUrl();
+  const tokenParam = adminTgId ? `token=${getDirectAdminToken(adminTgId)}` : '';
+  const authenticatedUrl = tokenParam ? `${portalUrl}?${tokenParam}` : portalUrl;
+
   // Primary Web App Button: Launches the full Admin Mini App directly inside Telegram if HTTPS
-  if (ADMIN_PORTAL_URL.startsWith('https://')) {
-    kb.row({ text: '📱 Launch Admin Mobile Mini App', web_app: { url: ADMIN_PORTAL_URL } });
+  if (portalUrl.startsWith('https://')) {
+    kb.row({ text: '📱 Launch Admin Mobile Mini App', web_app: { url: authenticatedUrl } });
+    kb.row({ text: '🌐 Open in Browser (Direct Link)', url: authenticatedUrl });
   } else {
     kb.row({ text: '📱 Admin Portal (Local Server)', callback_data: 'admin:local_url' });
   }
@@ -201,7 +229,7 @@ if (adminBot) {
 
     await ctx.reply(text, {
       parse_mode: 'HTML',
-      reply_markup: adminDashboardKeyboard(pendingOrders, pendingDeposits),
+      reply_markup: adminDashboardKeyboard(pendingOrders, pendingDeposits, from.id),
     });
   });
 
@@ -227,7 +255,7 @@ if (adminBot) {
 
     await safeEditMessageText(ctx, text, {
       parse_mode: 'HTML',
-      reply_markup: adminDashboardKeyboard(pendingOrders, pendingDeposits),
+      reply_markup: adminDashboardKeyboard(pendingOrders, pendingDeposits, ctx.from.id),
     });
     await ctx.answerCallbackQuery({ text: 'Hub refreshed ✅' }).catch(() => {});
   });
@@ -235,8 +263,9 @@ if (adminBot) {
   // Callback: Local URL info
   adminBot.callbackQuery('admin:local_url', async (ctx) => {
     await ctx.answerCallbackQuery().catch(() => {});
+    const portalUrl = getAdminPortalUrl();
     await ctx.reply(
-      `🌐 <b>Local Admin Portal:</b>\n<code>${ADMIN_PORTAL_URL}</code>\n\n` +
+      `🌐 <b>Admin Portal:</b>\n<code>${portalUrl}</code>\n\n` +
       `💡 <i>Telegram Web Apps require a public HTTPS URL. On your local machine, open the link above in your web browser, or launch an HTTPS tunnel (e.g. Cloudflare / Render) to open it inside Telegram.</i>`,
       { parse_mode: 'HTML' }
     );
@@ -268,7 +297,7 @@ if (adminBot) {
       kb.row({ text: `⚡ 1-Tap Fulfill ${ord.id.slice(-6)}`, callback_data: `admin:fulfill:${ord.id}` });
     }
 
-    kb.row(adminPortalBtn('📱 Manage in Admin Portal', '/orders'));
+    kb.row(adminPortalBtn('📱 Manage in Admin Portal', '/orders', ctx.from?.id));
     kb.row({ text: '🔙 Back to Hub', callback_data: 'admin:refresh' });
 
     await safeEditMessageText(ctx, listText, {
@@ -315,7 +344,7 @@ if (adminBot) {
       }
     }
 
-    kb.row(adminPortalBtn('📱 Open Payments Portal', '/payments'));
+    kb.row(adminPortalBtn('📱 Open Payments Portal', '/payments', ctx.from?.id));
     kb.row({ text: '🔙 Back to Hub', callback_data: 'admin:refresh' });
 
     await safeEditMessageText(ctx, text, { parse_mode: 'HTML', reply_markup: kb });
@@ -329,10 +358,12 @@ if (adminBot) {
       await ctx.reply(`⛔ <b>Access Denied:</b> This bot is strictly reserved for ${storeName} administrators.`, { parse_mode: 'HTML' });
       return;
     }
-    const { ordersCount, revenue, pendingOrders, pendingDeposits, usersCount } = await getLiveKpis();
     const kb = new InlineKeyboard();
-    if (ADMIN_PORTAL_URL.startsWith('https://')) {
-      kb.row({ text: '📊 View Interactive Charts', web_app: { url: ADMIN_PORTAL_URL } });
+    const portalUrl = getAdminPortalUrl();
+    const tokenParam = ctx.from?.id ? `token=${getDirectAdminToken(ctx.from.id)}` : '';
+    const authenticatedUrl = tokenParam ? `${portalUrl}?${tokenParam}` : portalUrl;
+    if (portalUrl.startsWith('https://')) {
+      kb.row({ text: '📊 View Interactive Charts', web_app: { url: authenticatedUrl } });
     }
     kb.row({ text: '🔄 Refresh Hub', callback_data: 'admin:refresh' });
 
@@ -359,7 +390,7 @@ if (adminBot) {
     const kb = new InlineKeyboard();
 
     if (!pending.length) {
-      kb.row(adminPortalBtn('📱 Manage in Admin Portal', '/orders'));
+      kb.row(adminPortalBtn('📱 Manage in Admin Portal', '/orders', ctx.from?.id));
       await ctx.reply(`📦 <b>Pending Orders (0)</b>\n\n✅ <i>All orders are fulfilled! No pending purchases awaiting action.</i>`, { parse_mode: 'HTML', reply_markup: kb });
       return;
     }
@@ -369,7 +400,7 @@ if (adminBot) {
       listText += `• <b>Order:</b> <code>${ord.id}</code>\n  🎁 Product: <b>${ord.productId}</b> (×${ord.qty})\n  💵 Total: <b>$${ord.total.toFixed(2)}</b>\n  👤 Buyer TG: <code>${ord.userTg}</code>\n\n`;
       kb.row({ text: `⚡ 1-Tap Fulfill ${ord.id.slice(-6)}`, callback_data: `admin:fulfill:${ord.id}` });
     }
-    kb.row(adminPortalBtn('📱 Manage in Admin Portal', '/orders'));
+    kb.row(adminPortalBtn('📱 Manage in Admin Portal', '/orders', ctx.from?.id));
 
     await ctx.reply(listText, { parse_mode: 'HTML', reply_markup: kb });
   });
@@ -392,7 +423,7 @@ if (adminBot) {
         text += `• <b>Intent:</b> <code>${intent.id}</code>\n  Method: <b>${intent.provider}</b> | $${intent.amount.toFixed(2)} ${intent.asset}\n  Status: <i>${intent.status}</i>\n${intent.txHash ? `  TxID: <code>${intent.txHash}</code>\n` : ''}\n`;
       }
     }
-    kb.row(adminPortalBtn('📱 Open Payments Portal', '/payments'));
+    kb.row(adminPortalBtn('📱 Open Payments Portal', '/payments', ctx.from?.id));
 
     await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb });
   });
@@ -414,7 +445,7 @@ if (adminBot) {
       }
     }
 
-    const kb = new InlineKeyboard().row(adminPortalBtn('➕ Restock in Admin Portal', '/products'));
+    const kb = new InlineKeyboard().row(adminPortalBtn('➕ Restock in Admin Portal', '/products', ctx.from?.id));
     let text = `⚠️ <b>Vault Stock Monitoring</b>\n\n`;
     if (lowStockItems.length === 0) {
       text += `✅ <i>All products have sufficient vault inventory (>= 5 pcs).</i>`;
@@ -486,12 +517,13 @@ if (adminBot) {
       const storeName = await getAdminStoreName();
       console.log(`[Admin Bot] Connected and running for ${storeName} as @${info.username}!`);
       try {
-        if (ADMIN_PORTAL_URL.startsWith('https://')) {
+        const portalUrl = getAdminPortalUrl();
+        if (portalUrl.startsWith('https://')) {
           await adminBot.api.setChatMenuButton({
             menu_button: {
               type: 'web_app',
               text: '🛠️ Admin Portal',
-              web_app: { url: ADMIN_PORTAL_URL },
+              web_app: { url: portalUrl },
             },
           });
         }

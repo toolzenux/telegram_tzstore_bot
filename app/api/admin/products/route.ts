@@ -5,6 +5,7 @@ import { store } from '@/lib/store';
 import { requireAdminToken } from '@/lib/admin-auth';
 import { db } from '@/lib/db';
 import { invalidateSharedCache } from '@/lib/admin-api';
+import { vaultEncrypt, parseCredentialLine } from '@/lib/vault-crypto';
 const tierSchema = z.object({ minQty: z.number().int().min(1), unitPrice: z.number().positive() });
 
 export async function GET(req: Request) {
@@ -96,11 +97,83 @@ export async function POST(req: Request) {
     logo: z.string().max(300).optional().default(''),
     tiers: z.array(tierSchema).optional().default([]),
     sortOrder: z.number().int().min(0).max(99999).optional(),
+    deliveryMode: z.enum(['AUTO', 'MANUAL']).optional().default('AUTO'),
+    initialAccounts: z.string().max(50000).optional().default(''),
   }).safeParse(j);
   if (!p.success) return NextResponse.json({ error: p.error.flatten() }, { status: 400 });
-  const created = store.addProduct(p.data);
+
+  const created = store.addProduct({
+    title: p.data.title,
+    categorySlug: p.data.categorySlug,
+    priceUsdt: p.data.priceUsdt,
+    desc: p.data.desc,
+    contents: p.data.contents || p.data.desc,
+    stock: p.data.stock,
+    logo: p.data.logo,
+    tiers: p.data.tiers,
+    sortOrder: p.data.sortOrder,
+  });
+
+  let importedCount = 0;
+  if (p.data.initialAccounts && p.data.initialAccounts.trim()) {
+    const lines = p.data.initialAccounts.split('\n').map((s) => s.trim()).filter(Boolean);
+    const parsed = lines.map(parseCredentialLine);
+    const valid = parsed.filter((r): r is { login: string; password: string } => !!r);
+    if (valid.length > 0) {
+      const rows = valid.map((r) => ({
+        login: r.login,
+        passwordEnc: vaultEncrypt(r.password),
+      }));
+      store.vaultAdd(created.id, rows);
+      importedCount = rows.length;
+      const avail = store.vaultAvailable(created.id);
+      store.updateProduct(created.id, { stock: avail });
+      created.stock = avail;
+      created.status = 'ACTIVE';
+    }
+  }
+
+  // Sync to PostgreSQL Prisma if connected
+  const prisma = db();
+  if (prisma) {
+    try {
+      const cat = await prisma.category.findFirst({
+        where: { name: { equals: p.data.categorySlug, mode: 'insensitive' } },
+      }) || await prisma.category.findFirst();
+      if (cat) {
+        await prisma.product.create({
+          data: {
+            id: created.id,
+            categoryId: cat.id,
+            name: p.data.title,
+            description: p.data.desc || p.data.title,
+            deliveryTemplate: p.data.contents || '',
+            priceUsdt: p.data.priceUsdt,
+            sortOrder: p.data.sortOrder ?? 0,
+            deliveryMode: p.data.deliveryMode,
+          },
+        }).catch(() => null);
+
+        if (importedCount > 0 && p.data.initialAccounts) {
+          const lines = p.data.initialAccounts.split('\n').map((s) => s.trim()).filter(Boolean);
+          const parsed = lines.map(parseCredentialLine);
+          const valid = parsed.filter((r): r is { login: string; password: string } => !!r);
+          await prisma.stockItem.createMany({
+            data: valid.map((r) => ({
+              productId: created.id,
+              data: `${r.login}:${r.password}`,
+              isSold: false,
+            })),
+          }).catch(() => null);
+        }
+      }
+    } catch (err) {
+      console.warn('Prisma product creation sync warning:', err);
+    }
+  }
+
   invalidateSharedCache();
-  return NextResponse.json({ ok: true, product: created }, { status: 201 });
+  return NextResponse.json({ ok: true, product: created, importedAccounts: importedCount }, { status: 201 });
 }
 
 export async function DELETE(req: Request) {

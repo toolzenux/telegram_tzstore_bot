@@ -107,13 +107,31 @@ export default function Layout() {
 
   const [storeName, setStoreName] = useState('TZ Store');
 
-  useEffect(() => {
+  const refreshBranding = () => {
     fetch('/api/settings/public')
       .then((r) => r.json())
       .then((d) => {
-        if (d?.storeName) setStoreName(d.storeName);
+        if (d?.storeName) {
+          setStoreName(d.storeName);
+          document.title = `${d.storeName} Admin`;
+        }
       })
       .catch(() => {});
+  };
+
+  useEffect(() => {
+    refreshBranding();
+    const handleBrandingChange = (e: Event) => {
+      const custom = e as CustomEvent<{ storeName?: string }>;
+      if (custom.detail?.storeName) {
+        setStoreName(custom.detail.storeName);
+        document.title = `${custom.detail.storeName} Admin`;
+      } else {
+        refreshBranding();
+      }
+    };
+    window.addEventListener('tz:storeNameChanged', handleBrandingChange);
+    return () => window.removeEventListener('tz:storeNameChanged', handleBrandingChange);
   }, []);
 
   // Close drawer on route change

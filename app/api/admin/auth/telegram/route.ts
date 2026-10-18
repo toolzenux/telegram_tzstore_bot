@@ -67,6 +67,22 @@ export async function POST(req: Request) {
   const adminRole = adminRecord?.role || 'SUPER_ADMIN';
   const email = adminRecord?.email || `${tgId}@admin.tzstore.io`;
 
+  if (prisma && !adminRecord) {
+    try {
+      adminRecord = await prisma.admin.create({
+        data: {
+          id: adminId,
+          email,
+          passwordHash: 'telegram_oauth',
+          role: 'SUPER_ADMIN',
+        },
+      });
+    } catch {
+      // If already exists with unique constraint, fetch it
+      adminRecord = await prisma.admin.findFirst({ where: { email } }).catch(() => null);
+    }
+  }
+
   const accessToken = signAccess(adminId, adminRole);
   const refreshToken = signRefresh(adminId);
 

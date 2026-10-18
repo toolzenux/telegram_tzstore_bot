@@ -10,16 +10,44 @@ function tokens() {
 
 async function refreshAccess(): Promise<string | null> {
   const { refresh } = tokens();
-  if (!refresh) return null;
-  const r = await fetch(`${BASE}/api/auth/refresh`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ refreshToken: refresh }),
-  });
-  if (!r.ok) return null;
-  const j = await r.json();
-  localStorage.setItem('tz_access', j.accessToken);
-  return j.accessToken as string;
+  if (refresh) {
+    try {
+      const r = await fetch(`${BASE}/api/auth/refresh`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ refreshToken: refresh }),
+      });
+      if (r.ok) {
+        const j = await r.json();
+        if (j.accessToken) {
+          localStorage.setItem('tz_access', j.accessToken);
+          return j.accessToken as string;
+        }
+      }
+    } catch {}
+  }
+
+  // Fallback: If inside Telegram WebApp with initData, re-authenticate seamlessly
+  try {
+    const tg = typeof window !== 'undefined' ? (window as any).Telegram?.WebApp : null;
+    if (tg?.initData) {
+      const r = await fetch(`${BASE}/api/admin/auth/telegram`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ initData: tg.initData }),
+      });
+      if (r.ok) {
+        const j = await r.json();
+        if (j.accessToken) {
+          localStorage.setItem('tz_access', j.accessToken);
+          if (j.refreshToken) localStorage.setItem('tz_refresh', j.refreshToken);
+          return j.accessToken as string;
+        }
+      }
+    }
+  } catch {}
+
+  return null;
 }
 
 export async function api(path: string, opts: RequestInit = {}, retry = true): Promise<unknown> {
@@ -31,10 +59,15 @@ export async function api(path: string, opts: RequestInit = {}, retry = true): P
   if (r.status === 401 && retry) {
     const next = await refreshAccess();
     if (next) return api(path, { ...opts, headers: { ...(opts.headers ?? {}), authorization: `Bearer ${next}` } }, false);
-    localStorage.removeItem('tz_access');
-    localStorage.removeItem('tz_refresh');
-    const loginPath = location.pathname.startsWith('/admin') ? '/admin/login' : '/login';
-    if (location.pathname !== loginPath) location.href = loginPath;
+    // Don't kick Telegram WebApp users to desktop login screen
+    const tg = typeof window !== 'undefined' ? (window as any).Telegram?.WebApp : null;
+    const isMobileApp = typeof location !== 'undefined' && location.pathname.includes('/mobile');
+    if (!tg?.initData && !isMobileApp) {
+      localStorage.removeItem('tz_access');
+      localStorage.removeItem('tz_refresh');
+      const loginPath = location.pathname.startsWith('/admin') ? '/admin/login' : '/login';
+      if (location.pathname !== loginPath) location.href = loginPath;
+    }
     throw new Error('session expired');
   }
   if (!r.ok) {

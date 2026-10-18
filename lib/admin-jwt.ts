@@ -16,8 +16,8 @@ export async function verifyPassword(pw: string, hash: string) {
   return bcrypt.compare(pw, hash);
 }
 
-export function signAccess(adminId: string, role: string) {
-  return jwt.sign({ sub: adminId, role, typ: 'access' }, ACCESS_SECRET, { expiresIn: ACCESS_TTL });
+export function signAccess(adminId: string, role: string, expiresIn: string | number = ACCESS_TTL) {
+  return jwt.sign({ sub: adminId, role, typ: 'access' }, ACCESS_SECRET, { expiresIn: expiresIn as any });
 }
 
 export function signRefresh(adminId: string) {
@@ -42,9 +42,23 @@ export async function getAdminFromRequest(req: Request) {
   try {
     const payload = verifyAccess(authHeader.slice(7));
     const prisma = db();
-    if (!prisma) return null;
-    const admin = await prisma.admin.findUnique({ where: { id: payload.sub } });
-    return admin;
+    if (prisma) {
+      try {
+        const admin = await prisma.admin.findUnique({ where: { id: payload.sub } });
+        if (admin) return admin;
+      } catch {}
+    }
+    // Fallback: If valid JWT signed with role (e.g. from Telegram auth or in-memory store)
+    if (payload.sub && payload.role) {
+      return {
+        id: payload.sub,
+        email: `${payload.sub}@admin.tzstore.io`,
+        role: payload.role as 'SUPER_ADMIN' | 'MANAGER' | 'SUPPORT',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+    }
+    return null;
   } catch {
     return null;
   }

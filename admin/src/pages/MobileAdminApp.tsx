@@ -132,6 +132,35 @@ function MobileTierEditor({
           + Add
         </button>
       </div>
+
+      <div className="flex items-center justify-between pt-1 text-[10px]">
+        <button
+          type="button"
+          onClick={() => {
+            if (!basePrice || basePrice <= 0) return;
+            const t3 = Math.max(0.01, Math.round(basePrice * 0.95 * 100) / 100);
+            const t5 = Math.max(0.01, Math.round(basePrice * 0.90 * 100) / 100);
+            const t10 = Math.max(0.01, Math.round(basePrice * 0.85 * 100) / 100);
+            onChange([
+              { minQty: 3, unitPrice: t3 },
+              { minQty: 5, unitPrice: t5 },
+              { minQty: 10, unitPrice: t10 },
+            ]);
+          }}
+          className="text-blue-400 hover:text-blue-300 font-semibold"
+        >
+          ⚡ Auto-Generate Tiers (3+, 5+, 10+)
+        </button>
+        {tiers.length > 0 && (
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            className="text-slate-400 hover:text-rose-400"
+          >
+            Clear
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -142,7 +171,17 @@ export default function MobileAdminApp() {
   const qc = useQueryClient();
 
   // Navigation State
-  const [activeTab, setActiveTab] = useState<'overview' | 'products' | 'categories' | 'orders' | 'deposits' | 'users' | 'settings' | 'tools'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'products' | 'categories' | 'orders' | 'deposits' | 'users' | 'settings' | 'tools'>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const q = new URLSearchParams(window.location.search).get('tab');
+        if (q && ['overview', 'products', 'categories', 'orders', 'deposits', 'users', 'settings', 'tools'].includes(q)) {
+          return q as any;
+        }
+      } catch {}
+    }
+    return 'overview';
+  });
   const [orderFilter, setOrderFilter] = useState<'ALL' | 'PENDING' | 'DELIVERED'>('ALL');
   const [productSearch, setProductSearch] = useState('');
   const [selectedCat, setSelectedCat] = useState('ALL');
@@ -162,6 +201,9 @@ export default function MobileAdminApp() {
   const [nCat, setNCat] = useState('');
   const [nPrice, setNPrice] = useState('');
   const [nDesc, setNDesc] = useState('');
+  const [nContents, setNContents] = useState('');
+  const [nDeliveryMode, setNDeliveryMode] = useState<'AUTO' | 'MANUAL'>('AUTO');
+  const [nAccounts, setNAccounts] = useState('');
   const [nStock, setNStock] = useState('0');
   const [nPhoto, setNPhoto] = useState('');
   const [nPreview, setNPreview] = useState('');
@@ -339,6 +381,7 @@ export default function MobileAdminApp() {
       await api('/api/settings', { method: 'PUT', body: JSON.stringify({ key: 'supportUrl', value: mobileSupportUrl.trim() }) });
       await api('/api/settings', { method: 'PUT', body: JSON.stringify({ key: 'channelUrl', value: mobileChannelUrl.trim() }) });
       notify('Store profile and name updated successfully!', 'success');
+      window.dispatchEvent(new CustomEvent('tz:storeNameChanged', { detail: { storeName: mobileStoreName.trim() } }));
       refetchSettings();
     } catch (e: any) {
       notify(e.message || 'Failed to save settings', 'error');
@@ -441,20 +484,26 @@ export default function MobileAdminApp() {
 
     setSavingProduct(true);
     try {
+      const accountsTrimmed = nAccounts.trim();
+      const detectedCount = accountsTrimmed ? accountsTrimmed.split('\n').filter((l) => l.trim().length > 0).length : 0;
+      const initialStockVal = detectedCount > 0 ? detectedCount : (Number(nStock) || 0);
+
       await tzCreateProduct({
         title: nTitle.trim(),
         categorySlug: slug,
         priceUsdt: Number(nPrice),
         desc: nDesc,
-        contents: nDesc,
-        stock: Number(nStock) || 0,
+        contents: nContents.trim() || nDesc,
+        deliveryMode: nDeliveryMode,
+        initialAccounts: accountsTrimmed || undefined,
+        stock: initialStockVal,
         logo: nPhoto || undefined,
         tiers: nTiers,
         sortOrder: nSortOrder ? Number(nSortOrder) : undefined,
       });
-      notify('Product added to TZ Store live catalog!', 'success');
+      notify(detectedCount > 0 ? `Product added with ${detectedCount} accounts in vault!` : 'Product added to TZ Store live catalog!', 'success');
       setCreatingProduct(false);
-      setNTitle(''); setNCat(''); setNPrice(''); setNDesc(''); setNStock('0');
+      setNTitle(''); setNCat(''); setNPrice(''); setNDesc(''); setNContents(''); setNDeliveryMode('AUTO'); setNAccounts(''); setNStock('0');
       setNPhoto(''); setNPreview(''); setNTiers([]); setNSortOrder('');
       await refetchProds();
     } catch (e: any) {
@@ -1945,11 +1994,16 @@ export default function MobileAdminApp() {
 
                         {/* Thumbnail if present */}
                         {p.logo && (
-                          <img
-                            src={tzLogoUrl(p.logo)}
-                            alt=""
-                            className="h-10 w-10 rounded-xl object-cover border border-white/10 shrink-0"
-                          />
+                          <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-slate-800/80 p-1 flex items-center justify-center">
+                            <img
+                              src={tzLogoUrl(p.logo)}
+                              alt={p.title}
+                              className="h-full w-full object-contain"
+                              onError={(e) => {
+                                (e.target as HTMLElement).style.display = 'none';
+                              }}
+                            />
+                          </div>
                         )}
                       </div>
 
@@ -2730,10 +2784,10 @@ export default function MobileAdminApp() {
                 <button
                   type="button"
                   onClick={() => createPhotoFileRef.current?.click()}
-                  className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-slate-700 bg-slate-800 hover:border-blue-500"
+                  className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-slate-700 bg-slate-800 p-1"
                 >
                   {nPreview ? (
-                    <img src={nPreview} alt="" className="h-full w-full object-cover" />
+                    <img src={nPreview.startsWith('data:') ? nPreview : tzLogoUrl(nPreview)} alt="" className="h-full w-full object-contain" />
                   ) : (
                     <ImagePlus size={22} className="text-slate-400" />
                   )}
@@ -2813,6 +2867,111 @@ export default function MobileAdminApp() {
                 </div>
               </div>
 
+              {/* Description */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Storefront Description</label>
+                <textarea
+                  rows={2}
+                  placeholder="Marketing description shown on storefront and bot…"
+                  value={nDesc}
+                  onChange={(e) => setNDesc(e.target.value)}
+                  className="mt-1 w-full rounded-xl bg-slate-900 border border-white/10 p-2.5 text-xs text-white"
+                />
+              </div>
+
+              {/* Delivery Format & Delivery Mode */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Delivery Format / Instructions</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Format: Email | Password | 2FA"
+                    value={nContents}
+                    onChange={(e) => setNContents(e.target.value)}
+                    className="mt-1 w-full rounded-xl bg-slate-900 border border-white/10 px-3 py-2 text-xs text-white"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Delivery Mode</label>
+                  <select
+                    value={nDeliveryMode}
+                    onChange={(e) => setNDeliveryMode(e.target.value as 'AUTO' | 'MANUAL')}
+                    className="mt-1 w-full rounded-xl bg-slate-900 border border-white/10 px-2.5 py-2 text-xs text-white"
+                  >
+                    <option value="AUTO">⚡ AUTO (Instant Vault)</option>
+                    <option value="MANUAL">🖐️ MANUAL (Review)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Bulk Pricing Tiers */}
+              <MobileTierEditor tiers={nTiers} onChange={setNTiers} basePrice={Number(nPrice) || undefined} />
+
+              {/* Initial Vault Accounts (Instant Delivery) */}
+              <div className="rounded-2xl border border-dashed border-white/10 bg-slate-900/60 p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-[11px] font-bold text-white flex items-center gap-1">
+                      🔐 Delivery Accounts (Optional)
+                    </span>
+                    <p className="text-[10px] text-slate-400">Pasted accounts are encrypted via AES-256 for instant delivery.</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const txt = await navigator.clipboard.readText();
+                          if (txt) {
+                            setNAccounts(txt);
+                            const count = txt.split('\n').filter((l) => l.trim().length > 0).length;
+                            setNStock(String(count));
+                            notify(`Pasted ${count} accounts`, 'info');
+                          }
+                        } catch { notify('Clipboard access denied', 'error'); }
+                      }}
+                      className="rounded-md border border-white/10 bg-slate-800 px-2 py-0.5 text-[10px] text-slate-200"
+                    >📋 Paste</button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const sample = 'user1@tzstore.io | SecretPass123\nuser2@tzstore.io | SecretPass456';
+                        setNAccounts(sample);
+                        setNStock('2');
+                        notify('Sample loaded', 'info');
+                      }}
+                      className="rounded-md border border-purple-500/30 bg-purple-900/30 px-2 py-0.5 text-[10px] text-purple-300"
+                    >🧪 Sample</button>
+                    {nAccounts && (
+                      <button
+                        type="button"
+                        onClick={() => { setNAccounts(''); setNStock('0'); }}
+                        className="text-rose-400 text-[10px] px-1"
+                      >Clear</button>
+                    )}
+                  </div>
+                </div>
+                <textarea
+                  rows={2}
+                  placeholder={'Paste accounts (login | password or login:password)...'}
+                  value={nAccounts}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setNAccounts(val);
+                    const count = val.split('\n').filter((l) => l.trim().length > 0).length;
+                    if (count > 0) setNStock(String(count));
+                  }}
+                  className="w-full font-mono rounded-xl bg-slate-950 border border-white/10 p-2 text-[11px] text-white"
+                />
+                <div className="text-[10px] text-slate-400">
+                  {nAccounts.trim() ? (
+                    <span className="text-emerald-400 font-semibold">✓ {nAccounts.trim().split('\n').filter((l) => l.trim().length > 0).length} accounts ready for auto-delivery</span>
+                  ) : (
+                    'No accounts entered (manual stock or fill later)'
+                  )}
+                </div>
+              </div>
+
               {/* Initial Stock */}
               <div>
                 <label className="text-[10px] font-bold text-slate-400 uppercase">Initial Stock</label>
@@ -2824,21 +2983,6 @@ export default function MobileAdminApp() {
                   className="mt-1 w-full rounded-xl bg-slate-900 border border-white/10 px-3 py-2 text-xs text-white"
                 />
               </div>
-
-              {/* Description */}
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase">Description</label>
-                <textarea
-                  rows={2}
-                  placeholder="What the buyer receives upon payment…"
-                  value={nDesc}
-                  onChange={(e) => setNDesc(e.target.value)}
-                  className="mt-1 w-full rounded-xl bg-slate-900 border border-white/10 p-2.5 text-xs text-white"
-                />
-              </div>
-
-              {/* Bulk Pricing Tiers */}
-              <MobileTierEditor tiers={nTiers} onChange={setNTiers} basePrice={Number(nPrice) || undefined} />
 
               {productFormError && (
                 <div className="rounded-xl bg-rose-500/10 border border-rose-500/30 p-2 text-xs text-rose-300">
@@ -2884,10 +3028,17 @@ export default function MobileAdminApp() {
                 <button
                   type="button"
                   onClick={() => editPhotoFileRef.current?.click()}
-                  className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-slate-700 bg-slate-800"
+                  className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-slate-700 bg-slate-800 p-1"
                 >
                   {ePreview ? (
-                    <img src={ePreview.startsWith('data:') ? ePreview : tzLogoUrl(ePreview)} alt="" className="h-full w-full object-cover" />
+                    <img
+                      src={ePreview.startsWith('data:') ? ePreview : tzLogoUrl(ePreview)}
+                      alt=""
+                      className="h-full w-full object-contain"
+                      onError={(e) => {
+                        (e.target as HTMLElement).style.opacity = '0.3';
+                      }}
+                    />
                   ) : (
                     <ImagePlus size={22} className="text-slate-400" />
                   )}

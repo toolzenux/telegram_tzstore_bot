@@ -725,6 +725,39 @@ function TierEditor({
           <Plus size={13} className="mr-1" /> Add Tier
         </Button>
       </div>
+
+      <div className="flex items-center justify-between pt-1 text-[11px]">
+        <button
+          type="button"
+          onClick={() => {
+            if (!basePrice || basePrice <= 0) {
+              toast('Please enter a base unit price first');
+              return;
+            }
+            const t3 = Math.max(0.01, Math.round(basePrice * 0.95 * 100) / 100);
+            const t5 = Math.max(0.01, Math.round(basePrice * 0.90 * 100) / 100);
+            const t10 = Math.max(0.01, Math.round(basePrice * 0.85 * 100) / 100);
+            onChange([
+              { minQty: 3, unitPrice: t3 },
+              { minQty: 5, unitPrice: t5 },
+              { minQty: 10, unitPrice: t10 },
+            ]);
+            toast('⚡ Generated standard volume discounts (3+ -5%, 5+ -10%, 10+ -15%)');
+          }}
+          className="text-blue-600 hover:text-blue-700 dark:text-blue-400 font-semibold flex items-center gap-1"
+        >
+          ⚡ Auto-Generate Tiers (3+, 5+, 10+ pcs)
+        </button>
+        {tiers.length > 0 && (
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            className="text-slate-400 hover:text-rose-500 transition"
+          >
+            Clear all tiers
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -753,6 +786,9 @@ export default function Products() {
   const [nCat, setNCat] = useState('');
   const [nPrice, setNPrice] = useState('');
   const [nDesc, setNDesc] = useState('');
+  const [nContents, setNContents] = useState('');
+  const [nDeliveryMode, setNDeliveryMode] = useState<'AUTO' | 'MANUAL'>('AUTO');
+  const [nAccounts, setNAccounts] = useState('');
   const [nStock, setNStock] = useState('0');
   const [nPhoto, setNPhoto] = useState(''); // uploaded /uploads/... url
   const [nPreview, setNPreview] = useState(''); // local preview before upload
@@ -855,7 +891,28 @@ export default function Products() {
         );
       },
     }),
-    col.accessor('title', { header: 'Product' }),
+    col.accessor('title', {
+      header: 'Product',
+      cell: (c) => {
+        const p = c.row.original;
+        const logoUrl = tzLogoUrl(p.logo);
+        return (
+          <div className="flex items-center gap-2.5">
+            {logoUrl ? (
+              <img
+                src={logoUrl}
+                alt=""
+                className="h-8 w-8 rounded-lg object-contain p-1 border border-slate-200 dark:border-white/10 shrink-0 bg-slate-100 dark:bg-slate-800/80"
+                onError={(e) => {
+                  (e.target as HTMLElement).style.display = 'none';
+                }}
+              />
+            ) : null}
+            <span className="font-semibold text-slate-900 dark:text-white">{p.title}</span>
+          </div>
+        );
+      },
+    }),
     col.accessor('categoryName', { header: 'Category' }),
     col.accessor('priceUsdt', { header: 'Price', cell: (c) => `$${Number(c.getValue()).toFixed(2)}` }),
     col.accessor('stock', { header: 'Stock', cell: (c) => <Badge tone={Number(c.getValue()) > 5 ? 'green' : 'amber'}>{String(c.getValue())}</Badge> }),
@@ -968,7 +1025,7 @@ export default function Products() {
   }
 
   function resetCreate() {
-    setCreating(false); setNTitle(''); setNCat(''); setNPrice(''); setNDesc(''); setNStock('0');
+    setCreating(false); setNTitle(''); setNCat(''); setNPrice(''); setNDesc(''); setNContents(''); setNDeliveryMode('AUTO'); setNAccounts(''); setNStock('0');
     setNPhoto(''); setNPreview(''); setNTiers([]); setNSortOrder(''); setSaving(false); setFormError('');
     setShowNewCat(false); setNewCatName(''); setCreatingCat(false);
     if (fileRef.current) fileRef.current.value = '';
@@ -1009,18 +1066,24 @@ export default function Products() {
     if (missing.length) { setFormError(`Missing: ${missing.join(' · ')}`); toast('Title, category and price are required'); return; }
     setSaving(true);
     try {
+      const accountsTrimmed = nAccounts.trim();
+      const detectedCount = accountsTrimmed ? accountsTrimmed.split('\n').filter((l) => l.trim().length > 0).length : 0;
+      const initialStockVal = detectedCount > 0 ? detectedCount : (Number(nStock) || 0);
+
       await tzCreateProduct({
         title: nTitle.trim(),
         categorySlug: slug,
         priceUsdt: Number(nPrice),
         desc: nDesc,
-        contents: nDesc,
-        stock: Number(nStock) || 0,
+        contents: nContents.trim() || nDesc,
+        deliveryMode: nDeliveryMode,
+        initialAccounts: accountsTrimmed || undefined,
+        stock: initialStockVal,
         logo: nPhoto || undefined,
         tiers: nTiers,
         sortOrder: nSortOrder ? Number(nSortOrder) : undefined,
       });
-      toast('Product added to TZ Store');
+      toast(detectedCount > 0 ? `Product added with ${detectedCount} accounts in vault!` : 'Product added to TZ Store');
       resetCreate();
       cats.refetch(); list.refetch();
     } catch (e) { toast(e instanceof Error ? e.message : 'create failed'); }
@@ -1082,8 +1145,19 @@ export default function Products() {
           <div className="space-y-3">
             <p className="text-xs text-slate-500">ID <code>{editing.id}</code> · Stock <b>{editing.stock}</b></p>
             <div className="flex items-center gap-3">
-              <button type="button" onClick={() => editFileRef.current?.click()} className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 hover:border-blue-500 hover:bg-blue-50 dark:border-slate-700 dark:bg-slate-800">
-                {ePreview ? <img src={ePreview.startsWith('data:') ? ePreview : tzLogoUrl(ePreview)} alt="preview" className="h-full w-full object-cover" /> : <ImagePlus size={26} className="text-slate-400" />}
+              <button type="button" onClick={() => editFileRef.current?.click()} className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 hover:border-blue-500 hover:bg-blue-50 dark:border-slate-700 dark:bg-slate-800 p-1">
+                {ePreview ? (
+                  <img
+                    src={ePreview.startsWith('data:') ? ePreview : tzLogoUrl(ePreview)}
+                    alt="preview"
+                    className="h-full w-full object-contain"
+                    onError={(e) => {
+                      (e.target as HTMLElement).style.opacity = '0.3';
+                    }}
+                  />
+                ) : (
+                  <ImagePlus size={26} className="text-slate-400" />
+                )}
               </button>
               <div className="text-sm">
                 <div className="font-semibold">Product photo</div>
@@ -1131,8 +1205,8 @@ export default function Products() {
       <Modal open={creating} onClose={() => setCreating(false)} title="New product — TZ Store">
         <div className="space-y-3">
           <div className="flex items-center gap-3">
-            <button type="button" onClick={() => fileRef.current?.click()} className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 hover:border-blue-500 hover:bg-blue-50 dark:border-slate-700 dark:bg-slate-800">
-              {nPreview ? <img src={nPreview} alt="preview" className="h-full w-full object-cover" /> : <ImagePlus size={26} className="text-slate-400" />}
+            <button type="button" onClick={() => fileRef.current?.click()} className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 hover:border-blue-500 hover:bg-blue-50 dark:border-slate-700 dark:bg-slate-800 p-1">
+              {nPreview ? <img src={nPreview} alt="preview" className="h-full w-full object-contain" /> : <ImagePlus size={26} className="text-slate-400" />}
             </button>
             <div className="text-sm">
               <div className="font-semibold">Product photo</div>
@@ -1170,8 +1244,89 @@ export default function Products() {
             <Field label="Price USDT"><Input type="number" step="0.01" min="0" value={nPrice} onChange={(e) => setNPrice(e.target.value)} placeholder="4.99" /></Field>
             <Field label="Priority / Serial #"><Input type="number" min="1" step="1" value={nSortOrder} onChange={(e) => setNSortOrder(e.target.value)} placeholder="Auto (Next)" /></Field>
           </div>
-          <Field label="Description"><Textarea rows={3} value={nDesc} onChange={(e) => setNDesc(e.target.value)} placeholder="What the buyer gets…" /></Field>
+          <Field label="Description (Storefront Marketing)"><Textarea rows={2} value={nDesc} onChange={(e) => setNDesc(e.target.value)} placeholder="Marketing description shown to customers on web & bot..." /></Field>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <Field label="Delivery Format & Instructions">
+              <Input
+                value={nContents}
+                onChange={(e) => setNContents(e.target.value)}
+                placeholder="e.g. Format: Email | Password | 2FA • Delivery: Instant"
+              />
+            </Field>
+            <Field label="Delivery Mode">
+              <Select value={nDeliveryMode} onChange={(e) => setNDeliveryMode(e.target.value as 'AUTO' | 'MANUAL')} className="w-full">
+                <option value="AUTO">⚡ AUTO (Instant Vault auto-delivery)</option>
+                <option value="MANUAL">🖐️ MANUAL (Manual fulfillment / review)</option>
+              </Select>
+            </Field>
+          </div>
           <TierEditor tiers={nTiers} onChange={setNTiers} basePrice={Number(nPrice) || undefined} />
+
+          {/* Initial Vault Accounts (Instant Delivery) */}
+          <div className="space-y-2 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900/40 p-3.5">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                  🔐 Initial Delivery Vault Accounts (Optional)
+                </span>
+                <p className="text-[11px] text-slate-500">
+                  Paste accounts now for instant auto-delivery upon order payment. Automatically encrypted via AES-256.
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const txt = await navigator.clipboard.readText();
+                      if (txt) {
+                        setNAccounts(txt);
+                        const count = txt.split('\n').filter((l) => l.trim().length > 0).length;
+                        setNStock(String(count));
+                        toast(`Pasted ${count} accounts from clipboard`);
+                      }
+                    } catch { toast('Clipboard permission denied'); }
+                  }}
+                  className="rounded-md border border-slate-200 dark:border-slate-700 px-2 py-0.5 text-xs hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                >📋 Paste</button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const sample = 'user1@tzstore.io | SecretPass123\nuser2@tzstore.io | SecretPass456\nuser3@tzstore.io | SecretPass789';
+                    setNAccounts(sample);
+                    setNStock('3');
+                    toast('Sample accounts loaded');
+                  }}
+                  className="rounded-md border border-purple-200 dark:border-purple-800/50 bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 px-2 py-0.5 text-xs transition"
+                >🧪 Sample</button>
+                {nAccounts && (
+                  <button
+                    type="button"
+                    onClick={() => { setNAccounts(''); setNStock('0'); }}
+                    className="text-red-500 hover:text-red-600 text-xs px-1"
+                  >Clear</button>
+                )}
+              </div>
+            </div>
+            <Textarea
+              rows={3}
+              value={nAccounts}
+              onChange={(e) => {
+                const val = e.target.value;
+                setNAccounts(val);
+                const count = val.split('\n').filter((l) => l.trim().length > 0).length;
+                if (count > 0) setNStock(String(count));
+              }}
+              placeholder={'Paste accounts here (one per line)...\nSupported: login | password, login:password, login----password'}
+              className="font-mono text-xs w-full"
+            />
+            <div className="flex items-center justify-between text-xs">
+              <span className={nAccounts.trim() ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : 'text-slate-400'}>
+                {nAccounts.trim() ? `✓ ${nAccounts.trim().split('\n').filter((l) => l.trim().length > 0).length} vault accounts ready for instant delivery` : 'No accounts pasted (manual stock or fill later)'}
+              </span>
+            </div>
+          </div>
+
           <Field label="Initial stock"><Input type="number" min="0" value={nStock} onChange={(e) => setNStock(e.target.value)} /></Field>
           {formError && <p className="rounded-xl bg-red-50 p-2.5 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-300">{formError}</p>}
           <Button variant="green" onClick={createProduct} disabled={saving || uploading} className="w-full">{saving ? 'Saving…' : 'Add product'}</Button>

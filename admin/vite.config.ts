@@ -14,6 +14,8 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:3000',
       '/webhooks': 'http://localhost:3000',
+      '/logos': 'http://localhost:3000',
+      '/uploads': 'http://localhost:3000',
       '/tz-api': { target: 'http://localhost:3000', changeOrigin: true, rewrite: (p) => p.replace(/^\/tz-api/, '/api') },
     },
   },

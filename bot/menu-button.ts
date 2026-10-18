@@ -33,15 +33,36 @@ const bot = new Bot(process.env.BOT_TOKEN || 'test-token', {
 const URL = process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
 
 async function initMenuButton() {
-  if (!process.env.BOT_TOKEN) {
-    console.error('BOT_TOKEN is not defined');
-    return;
+  const storeUrl = process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
+  const adminUrl = `${storeUrl.replace(/\/+$/, '')}/admin/mobile`;
+
+  if (process.env.BOT_TOKEN) {
+    if (storeUrl.startsWith('https://')) {
+      try {
+        await bot.api.setChatMenuButton({ menu_button: { type: 'web_app', text: 'Open Store', web_app: { url: storeUrl } } });
+        console.log(`[Store Bot] Menu button set to: ${storeUrl}`);
+      } catch (e: any) {
+        console.warn('[Store Bot] Failed to set menu button:', e?.message || e);
+      }
+    } else {
+      console.log(`Note: URL ${storeUrl} is HTTP. Telegram Web App menu buttons require an HTTPS URL.`);
+    }
   }
-  if (URL.startsWith('https://')) {
-    await bot.api.setChatMenuButton({ menu_button: { type: 'web_app', text: 'Open Store', web_app: { url: URL } } });
-    console.log(`Menu button set to: ${URL}`);
-  } else {
-    console.log(`Note: URL ${URL} is HTTP. Telegram Web App menu buttons require an HTTPS URL.`);
+
+  if (process.env.ADMIN_BOT_TOKEN) {
+    if (adminUrl.startsWith('https://')) {
+      try {
+        const adminBotInstance = new Bot(process.env.ADMIN_BOT_TOKEN, {
+          client: { baseFetchConfig: { agent: ipv4Agent, compress: true } },
+        });
+        await adminBotInstance.api.setChatMenuButton({
+          menu_button: { type: 'web_app', text: '🛠️ Admin Portal', web_app: { url: adminUrl } },
+        });
+        console.log(`[Admin Bot] Menu button set to: ${adminUrl}`);
+      } catch (e: any) {
+        console.warn('[Admin Bot] Failed to set menu button:', e?.message || e);
+      }
+    }
   }
 }
 
