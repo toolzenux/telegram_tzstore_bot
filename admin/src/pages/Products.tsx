@@ -2,7 +2,7 @@ import { useMemo, useRef, useState, Fragment } from 'react';
 import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Pencil, Package, Plus, ImagePlus, X, KeyRound, Eye, EyeOff, Trash2, Copy, Upload, Search, Smartphone, Layers, CheckCircle } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useReactTable, getCoreRowModel, getPaginationRowModel, flexRender, createColumnHelper } from '@tanstack/react-table';
-import { tzGetProducts, tzGetCategories, tzCreateProduct, tzCreateCategory, tzUpdateProduct, tzDeleteProduct, tzUploadPhoto, tzLogoUrl, tzVaultList, tzVaultAdd, tzVaultImport, tzVaultDelete, tzVaultUpdate, type TzProduct, type VaultRow } from '../tzstore';
+import { tzGetProducts, tzGetCategories, tzCreateProduct, tzCreateCategory, tzUpdateProduct, tzDeleteProduct, tzReorderProducts, tzUploadPhoto, tzLogoUrl, tzVaultList, tzVaultAdd, tzVaultImport, tzVaultDelete, tzVaultUpdate, type TzProduct, type VaultRow } from '../tzstore';
 import { Badge, Button, Card, Modal, Confirm, Empty, Field, Input, Select, Skeleton, Textarea, toast } from '../ui';
 
 const col = createColumnHelper<TzProduct & { categoryName: string }>();
@@ -746,6 +746,7 @@ export default function Products() {
   const [eTiers, setETiers] = useState<Array<{ minQty: number; unitPrice: number }>>([]);
   const [eUploading, setEUploading] = useState(false);
   const [eSaving, setESaving] = useState(false);
+  const [eSortOrder, setESortOrder] = useState('1');
   const [editError, setEditError] = useState('');
   const editFileRef = useRef<HTMLInputElement>(null);
   const [nTitle, setNTitle] = useState('');
@@ -756,6 +757,7 @@ export default function Products() {
   const [nPhoto, setNPhoto] = useState(''); // uploaded /uploads/... url
   const [nPreview, setNPreview] = useState(''); // local preview before upload
   const [nTiers, setNTiers] = useState<Array<{ minQty: number; unitPrice: number }>>([]);
+  const [nSortOrder, setNSortOrder] = useState('');
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showNewCat, setShowNewCat] = useState(false);
@@ -772,12 +774,87 @@ export default function Products() {
   const rows = useMemo(() => {
     const items = (list.data?.products ?? []).map((p) => ({ ...p, categoryName: catName[p.categorySlug] ?? p.categorySlug }));
     const q = search.trim().toLowerCase();
-    return items.filter((p) =>
-      (!cat || p.categorySlug === cat) &&
-      (!q || p.title.toLowerCase().includes(q) || p.id.toLowerCase().includes(q)));
+    return items
+      .filter((p) =>
+        (!cat || p.categorySlug === cat) &&
+        (!q || p.title.toLowerCase().includes(q) || p.id.toLowerCase().includes(q)))
+      .sort((a, b) => (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999));
   }, [list.data, catName, search, cat]);
 
+  async function moveProduct(productId: string, dir: -1 | 1) {
+    const ordered = rows.map((r) => r.id);
+    const i = ordered.indexOf(productId);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= ordered.length) return;
+    [ordered[i], ordered[j]] = [ordered[j], ordered[i]];
+    try {
+      await tzReorderProducts(ordered);
+      toast('Product order updated');
+      list.refetch();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'reorder failed');
+    }
+  }
+
+  async function updateProductSerial(productId: string, val: number) {
+    if (isNaN(val) || val < 1) return;
+    try {
+      await tzUpdateProduct(productId, { sortOrder: val });
+      toast(`Priority set to #${val}`);
+      list.refetch();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'update failed');
+    }
+  }
+
   const columns = useMemo(() => [
+    col.display({
+      id: 'serial',
+      header: '# Priority',
+      cell: (c) => {
+        const p = c.row.original;
+        const currentSerial = p.sortOrder ?? (c.row.index + 1);
+        return (
+          <div className="flex items-center gap-1.5">
+            <input
+              type="number"
+              min="1"
+              defaultValue={currentSerial}
+              key={`serial-${p.id}-${currentSerial}`}
+              onBlur={(e) => {
+                const val = Number(e.target.value);
+                if (val && val !== currentSerial) updateProductSerial(p.id, val);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+              }}
+              title="Type priority number & press Enter"
+              className="h-7 w-12 rounded-lg border border-slate-200 bg-slate-50 px-1 text-center text-xs font-black text-blue-600 shadow-sm focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-blue-400"
+            />
+            <div className="flex flex-col">
+              <button
+                type="button"
+                title="Move up (higher priority)"
+                onClick={() => moveProduct(p.id, -1)}
+                disabled={c.row.index === 0}
+                className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-20 dark:hover:bg-slate-800"
+              >
+                <ChevronUp size={12} />
+              </button>
+              <button
+                type="button"
+                title="Move down (lower priority)"
+                onClick={() => moveProduct(p.id, 1)}
+                disabled={c.row.index === rows.length - 1}
+                className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-20 dark:hover:bg-slate-800"
+              >
+                <ChevronDown size={12} />
+              </button>
+            </div>
+          </div>
+        );
+      },
+    }),
     col.accessor('title', { header: 'Product' }),
     col.accessor('categoryName', { header: 'Category' }),
     col.accessor('priceUsdt', { header: 'Price', cell: (c) => `$${Number(c.getValue()).toFixed(2)}` }),
@@ -801,13 +878,14 @@ export default function Products() {
         </span>
       );
     } }),
-  ], [expandedId]);
+  ], [expandedId, rows]);
 
   const table = useReactTable({ data: rows, columns, getCoreRowModel: getCoreRowModel(), getPaginationRowModel: getPaginationRowModel() });
 
   function openEdit(p: TzProduct) {
     setEditing(p);
     setETitle(p.title); setECat(p.categorySlug); setEPrice(String(p.priceUsdt)); setEDesc(p.desc ?? '');
+    setESortOrder(String(p.sortOrder ?? 1));
     setEPhoto(p.logo ?? ''); setEPreview(p.logo ?? '');
     setETiers(p.tiers ? JSON.parse(JSON.stringify(p.tiers)) : []);
     setEditError(''); setEUploading(false); setESaving(false);
@@ -848,6 +926,7 @@ export default function Products() {
         contents: eDesc,
         logo: ePhoto || undefined,
         tiers: eTiers,
+        sortOrder: Number(eSortOrder) || undefined,
       });
       toast('Saved to TZ Store'); setEditing(null); list.refetch();
     } catch (e) { setEditError(e instanceof Error ? e.message : 'save failed'); }
@@ -890,7 +969,7 @@ export default function Products() {
 
   function resetCreate() {
     setCreating(false); setNTitle(''); setNCat(''); setNPrice(''); setNDesc(''); setNStock('0');
-    setNPhoto(''); setNPreview(''); setNTiers([]); setSaving(false); setFormError('');
+    setNPhoto(''); setNPreview(''); setNTiers([]); setNSortOrder(''); setSaving(false); setFormError('');
     setShowNewCat(false); setNewCatName(''); setCreatingCat(false);
     if (fileRef.current) fileRef.current.value = '';
   }
@@ -939,6 +1018,7 @@ export default function Products() {
         stock: Number(nStock) || 0,
         logo: nPhoto || undefined,
         tiers: nTiers,
+        sortOrder: nSortOrder ? Number(nSortOrder) : undefined,
       });
       toast('Product added to TZ Store');
       resetCreate();
@@ -1023,11 +1103,12 @@ export default function Products() {
               Drop an image anywhere on this box to upload instantly
             </div>
             <Field label="Title"><Input value={eTitle} onChange={(e) => setETitle(e.target.value)} /></Field>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <Field label="Category"><Select value={eCat} onChange={(e) => setECat(e.target.value)}>
                 <option value="">Select category…</option>{((cats.data?.categories ?? []) as { slug: string; name: string }[]).map((c) => <option key={c.slug} value={c.slug}>{c.name}</option>)}
               </Select></Field>
               <Field label="Price USDT"><Input type="number" step="0.01" min="0" value={ePrice} onChange={(e) => setEPrice(e.target.value)} /></Field>
+              <Field label="Priority / Serial #"><Input type="number" min="1" step="1" value={eSortOrder} onChange={(e) => setESortOrder(e.target.value)} placeholder="1" /></Field>
             </div>
             <Field label="Description"><Textarea rows={3} value={eDesc} onChange={(e) => setEDesc(e.target.value)} /></Field>
             <TierEditor tiers={eTiers} onChange={setETiers} basePrice={Number(ePrice) || undefined} />
@@ -1071,7 +1152,7 @@ export default function Products() {
             Drop an image anywhere on this box to upload instantly
           </div>
           <Field label="Title"><Input value={nTitle} onChange={(e) => setNTitle(e.target.value)} placeholder="e.g. Netflix Premium 1M" /></Field>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <Field label="Category">
               <Select value={nCat} onChange={(e) => setNCat(e.target.value)}>
                 <option value="">Select category…</option>{((cats.data?.categories ?? []) as { slug: string; name: string }[]).map((c) => <option key={c.slug} value={c.slug}>{c.name}</option>)}
@@ -1087,6 +1168,7 @@ export default function Products() {
               )}
             </Field>
             <Field label="Price USDT"><Input type="number" step="0.01" min="0" value={nPrice} onChange={(e) => setNPrice(e.target.value)} placeholder="4.99" /></Field>
+            <Field label="Priority / Serial #"><Input type="number" min="1" step="1" value={nSortOrder} onChange={(e) => setNSortOrder(e.target.value)} placeholder="Auto (Next)" /></Field>
           </div>
           <Field label="Description"><Textarea rows={3} value={nDesc} onChange={(e) => setNDesc(e.target.value)} placeholder="What the buyer gets…" /></Field>
           <TierEditor tiers={nTiers} onChange={setNTiers} basePrice={Number(nPrice) || undefined} />

@@ -21,7 +21,7 @@ const FILE = () => {
 type Order = { id: string; userTg: string; productId: string; qty: number; unitPrice: number; total: number; status: string; createdAt: string; code?: string; deliveries?: Array<{ login: string; password: string }> };
 type Intent = { id: string; orderId: string; provider: string; asset: string; amount: number; address?: string; memo?: string; status: string; expiresAt: string; txHash?: string; invoiceLink?: string };
 export type VaultRow = { id: string; productId: string; login: string; passwordEnc: string; status: 'AVAILABLE' | 'SOLD'; orderId?: string; soldAt?: string; createdAt: string };
-type State = { orders: Order[]; intents: Intent[]; notifs: { userTg: string; productId: string }[]; stockOv: Record<string, number>; priceOv: Record<string, number>; tiersOv: Record<string, BulkTier[]>; logoOv: Record<string, string>; titleOv: Record<string, string>; descOv: Record<string, string>; contentsOv: Record<string, string>; catOv: Record<string, string>; deletedProducts?: string[]; custom: SeedProduct[]; customCats: Array<{ slug: string; name: string; emoji: string; sort: number; logo: string }>; catOrder: string[]; vault: VaultRow[]; restocks: { id: string; productId: string; qty: number; message: string; createdAt: string }[]; settings?: Record<string, unknown> };
+type State = { orders: Order[]; intents: Intent[]; notifs: { userTg: string; productId: string }[]; stockOv: Record<string, number>; priceOv: Record<string, number>; tiersOv: Record<string, BulkTier[]>; logoOv: Record<string, string>; titleOv: Record<string, string>; descOv: Record<string, string>; contentsOv: Record<string, string>; catOv: Record<string, string>; sortOrderOv?: Record<string, number>; deletedProducts?: string[]; custom: SeedProduct[]; customCats: Array<{ slug: string; name: string; emoji: string; sort: number; logo: string }>; catOrder: string[]; vault: VaultRow[]; restocks: { id: string; productId: string; qty: number; message: string; createdAt: string }[]; settings?: Record<string, unknown> };
 let memState: State | null = null;
 let currentFile: string = '';
 let lastMtime: number = 0;
@@ -34,7 +34,7 @@ function load(): State {
       currentFile = f;
       lastMtime = mtime;
       const j = JSON.parse(fs.readFileSync(f, 'utf8'));
-      const state: State = { orders: [], intents: [], notifs: [], stockOv: {}, priceOv: {}, tiersOv: {}, logoOv: {}, titleOv: {}, descOv: {}, contentsOv: {}, catOv: {}, deletedProducts: [], custom: [], customCats: [], catOrder: [], vault: [], restocks: [], settings: {}, ...j };
+      const state: State = { orders: [], intents: [], notifs: [], stockOv: {}, priceOv: {}, tiersOv: {}, logoOv: {}, titleOv: {}, descOv: {}, contentsOv: {}, catOv: {}, sortOrderOv: {}, deletedProducts: [], custom: [], customCats: [], catOrder: [], vault: [], restocks: [], settings: {}, ...j };
       memState = state;
       return state;
     }
@@ -42,7 +42,7 @@ function load(): State {
     if (fs.existsSync(bundle)) {
       try { fs.copyFileSync(bundle, f); } catch {}
       const j = JSON.parse(fs.readFileSync(f, 'utf8'));
-      const state: State = { orders: [], intents: [], notifs: [], stockOv: {}, priceOv: {}, tiersOv: {}, logoOv: {}, titleOv: {}, descOv: {}, contentsOv: {}, catOv: {}, deletedProducts: [], custom: [], customCats: [], catOrder: [], vault: [], restocks: [], settings: {}, ...j };
+      const state: State = { orders: [], intents: [], notifs: [], stockOv: {}, priceOv: {}, tiersOv: {}, logoOv: {}, titleOv: {}, descOv: {}, contentsOv: {}, catOv: {}, sortOrderOv: {}, deletedProducts: [], custom: [], customCats: [], catOrder: [], vault: [], restocks: [], settings: {}, ...j };
       memState = state;
       currentFile = f;
       try { lastMtime = fs.statSync(f).mtimeMs; } catch {}
@@ -51,7 +51,7 @@ function load(): State {
 
   } catch {}
   if (memState && currentFile === f) return memState;
-  const fallback: State = { orders: [], intents: [], notifs: [], stockOv: {}, priceOv: {}, tiersOv: {}, logoOv: {}, titleOv: {}, descOv: {}, contentsOv: {}, catOv: {}, deletedProducts: [], custom: [], customCats: [], catOrder: [], vault: [], restocks: [{ id: 'r1', productId: 'p-gemini-18m', qty: 30, message: 'Restocked! Gemini 18 Months', createdAt: new Date().toISOString() }], settings: {} };
+  const fallback: State = { orders: [], intents: [], notifs: [], stockOv: {}, priceOv: {}, tiersOv: {}, logoOv: {}, titleOv: {}, descOv: {}, contentsOv: {}, catOv: {}, sortOrderOv: {}, deletedProducts: [], custom: [], customCats: [], catOrder: [], vault: [], restocks: [{ id: 'r1', productId: 'p-gemini-18m', qty: 30, message: 'Restocked! Gemini 18 Months', createdAt: new Date().toISOString() }], settings: {} };
   memState = fallback;
   return fallback;
 }
@@ -83,6 +83,7 @@ function effTitle(s: State, p: { id: string; title: string }) { return s.titleOv
 function effDesc(s: State, p: { id: string; desc: string }) { return s.descOv[p.id] ?? p.desc; }
 function effContents(s: State, p: { id: string; contents: string }) { return s.contentsOv[p.id] ?? p.contents; }
 function effCat<T extends { id: string; categorySlug: string }>(s: State, p: T) { return s.catOv[p.id] ?? p.categorySlug; }
+function effSort(s: State, p: SeedProduct, index: number): number { return s.sortOrderOv?.[p.id] ?? p.sortOrder ?? (index + 1); }
 function allSeedAndCustom(s: State): SeedProduct[] { return [...PRODUCTS, ...s.custom].filter((p) => !(s.deletedProducts ?? []).includes(p.id)); }
 export const store = {
   listCats: () => {
@@ -117,13 +118,43 @@ export const store = {
     s.catOrder = s.catOrder.filter((x) => x !== slug);
     save(s);
   },
-  listProducts: (slug: string) => allSeedAndCustom(load()).filter((p) => { const s = load(); return effCat(s, p) === slug; }).map((p) => { const s = load(); return { ...p, categorySlug: effCat(s, p), title: effTitle(s, p), desc: effDesc(s, p), contents: effContents(s, p), logo: effLogo(s, p), priceUsdt: effPrice(s, p), tiers: effTiers(s, p), stock: effStock(s, p) }; }),
+  listProducts: (slug: string) =>
+    allSeedAndCustom(load())
+      .filter((p) => { const s = load(); return effCat(s, p) === slug; })
+      .map((p, idx) => {
+        const s = load();
+        return {
+          ...p,
+          categorySlug: effCat(s, p),
+          title: effTitle(s, p),
+          desc: effDesc(s, p),
+          contents: effContents(s, p),
+          logo: effLogo(s, p),
+          priceUsdt: effPrice(s, p),
+          tiers: effTiers(s, p),
+          stock: effStock(s, p),
+          sortOrder: effSort(s, p, idx),
+        };
+      })
+      .sort((a, b) => (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999)),
   getProduct: (id: string) => {
     const s = load();
     const p = allSeedAndCustom(s).find((x) => x.id === id);
     if (!p) return undefined;
     const st = effStock(s, p);
-    return { ...p, categorySlug: effCat(s, p), title: effTitle(s, p), desc: effDesc(s, p), contents: effContents(s, p), logo: effLogo(s, p), priceUsdt: effPrice(s, p), tiers: effTiers(s, p), stock: st, status: (st <= 0 ? 'OOS' : p.status) as 'ACTIVE' | 'OOS' };
+    return {
+      ...p,
+      categorySlug: effCat(s, p),
+      title: effTitle(s, p),
+      desc: effDesc(s, p),
+      contents: effContents(s, p),
+      logo: effLogo(s, p),
+      priceUsdt: effPrice(s, p),
+      tiers: effTiers(s, p),
+      stock: st,
+      status: (st <= 0 ? 'OOS' : p.status) as 'ACTIVE' | 'OOS',
+      sortOrder: effSort(s, p, 0),
+    };
   },
   createOrder: (o: Order) => { const s = load(); s.orders.push(o); save(s); return o; },
   getOrder: (id: string) => load().orders.find((o) => o.id === id),
@@ -135,7 +166,23 @@ export const store = {
   addNotif: (userTg: string, productId: string) => { const s = load(); if (!s.notifs.find((n) => n.userTg === userTg && n.productId === productId)) s.notifs.push({ userTg, productId }); save(s); },
   restocks: () => load().restocks,
   addRestock: (r: State['restocks'][number]) => { const s = load(); s.restocks.unshift(r); save(s); },
-  allProducts: () => { const s = load(); return allSeedAndCustom(s).map((p) => ({ ...p, categorySlug: effCat(s, p), title: effTitle(s, p), desc: effDesc(s, p), contents: effContents(s, p), logo: effLogo(s, p), priceUsdt: effPrice(s, p), tiers: effTiers(s, p), stock: effStock(s, p) })); },
+  allProducts: () => {
+    const s = load();
+    return allSeedAndCustom(s)
+      .map((p, idx) => ({
+        ...p,
+        categorySlug: effCat(s, p),
+        title: effTitle(s, p),
+        desc: effDesc(s, p),
+        contents: effContents(s, p),
+        logo: effLogo(s, p),
+        priceUsdt: effPrice(s, p),
+        tiers: effTiers(s, p),
+        stock: effStock(s, p),
+        sortOrder: effSort(s, p, idx),
+      }))
+      .sort((a, b) => (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999));
+  },
   setPrice: (id: string, price: number) => {
     const s = load();
     const seed = PRODUCTS.find((x) => x.id === id);
@@ -155,22 +202,26 @@ export const store = {
     save(s);
   },
   addStock: (id: string, n: number) => { const s = load(); const base = allSeedAndCustom(s).find((x) => x.id === id)?.stock ?? 0; s.stockOv[id] = (s.stockOv[id] ?? base) + n; save(s); },
-  addProduct: (p: { title: string; categorySlug: string; priceUsdt: number; desc?: string; contents?: string; stock?: number; logo?: string; tiers?: BulkTier[] }) => {
+  addProduct: (p: { title: string; categorySlug: string; priceUsdt: number; desc?: string; contents?: string; stock?: number; logo?: string; tiers?: BulkTier[]; sortOrder?: number }) => {
     const s = load();
     const id = `p-custom-${Date.now().toString(36)}`;
+    const sortOrder = p.sortOrder !== undefined ? p.sortOrder : (allSeedAndCustom(s).length + 1);
     const item: SeedProduct = {
       id, categorySlug: p.categorySlug, title: p.title,
       desc: p.desc ?? '', contents: p.contents ?? '',
       priceUsdt: p.priceUsdt, tiers: p.tiers ?? [], stock: p.stock ?? 0, status: 'ACTIVE',
+      sortOrder,
     };
     s.custom.push(item);
     if (p.logo) s.logoOv[id] = p.logo;
     if (p.tiers && p.tiers.length) s.tiersOv[id] = p.tiers;
+    if (!s.sortOrderOv) s.sortOrderOv = {};
+    s.sortOrderOv[id] = sortOrder;
     save(s);
-    return { ...item, logo: effLogo(s, item), tiers: effTiers(s, item) };
+    return { ...item, logo: effLogo(s, item), tiers: effTiers(s, item), sortOrder };
   },
   setLogo: (id: string, logo: string) => { const s = load(); s.logoOv[id] = logo; save(s); },
-  updateProduct: (id: string, patch: { title?: string; categorySlug?: string; desc?: string; contents?: string; logo?: string; tiers?: BulkTier[] }) => {
+  updateProduct: (id: string, patch: { title?: string; categorySlug?: string; desc?: string; contents?: string; logo?: string; tiers?: BulkTier[]; sortOrder?: number }) => {
     const s = load();
     const target = allSeedAndCustom(s).find((x) => x.id === id);
     if (!target) throw new Error('unknown product');
@@ -184,6 +235,24 @@ export const store = {
     if (patch.categorySlug !== undefined) { s.catOv[id] = patch.categorySlug; if (cu) cu.categorySlug = patch.categorySlug; }
     if (patch.logo !== undefined) { s.logoOv[id] = patch.logo; }
     if (patch.tiers !== undefined) { s.tiersOv[id] = patch.tiers; if (cu) cu.tiers = patch.tiers; if (target) target.tiers = patch.tiers; }
+    if (patch.sortOrder !== undefined) {
+      if (!s.sortOrderOv) s.sortOrderOv = {};
+      s.sortOrderOv[id] = patch.sortOrder;
+      if (cu) cu.sortOrder = patch.sortOrder;
+      if (target) target.sortOrder = patch.sortOrder;
+    }
+    save(s);
+  },
+  reorderProducts: (orderedIds: string[]) => {
+    const s = load();
+    if (!s.sortOrderOv) s.sortOrderOv = {};
+    orderedIds.forEach((id, idx) => {
+      s.sortOrderOv![id] = idx + 1;
+      const cu = s.custom.find((x) => x.id === id);
+      if (cu) cu.sortOrder = idx + 1;
+      const seed = PRODUCTS.find((x) => x.id === id);
+      if (seed) seed.sortOrder = idx + 1;
+    });
     save(s);
   },
   // ---- Delivery vault (account ID + password rows, encrypted at rest) ----

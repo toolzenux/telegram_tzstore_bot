@@ -174,6 +174,61 @@ describe('UNIT TESTS - ALL FUNCTIONS', () => {
       expect(store.getProduct(p.id)).toBeUndefined();
       expect(store.vaultAvailable(p.id)).toBe(0);
     });
+
+    it('respects product serial/priority ordering and reordering', () => {
+      const p1 = store.addProduct({
+        title: 'Priority Product A',
+        categorySlug: 'telegram-premium',
+        priceUsdt: 2.0,
+        sortOrder: 10,
+      });
+      const p2 = store.addProduct({
+        title: 'Priority Product B',
+        categorySlug: 'telegram-premium',
+        priceUsdt: 3.0,
+        sortOrder: 5,
+      });
+      const p3 = store.addProduct({
+        title: 'Priority Product C',
+        categorySlug: 'telegram-premium',
+        priceUsdt: 4.0,
+        sortOrder: 1,
+      });
+
+      // Fetch products for category
+      const list = store.listProducts('telegram-premium');
+      const idxA = list.findIndex((x) => x.id === p1.id);
+      const idxB = list.findIndex((x) => x.id === p2.id);
+      const idxC = list.findIndex((x) => x.id === p3.id);
+
+      // p3 (sortOrder 1) must come before p2 (sortOrder 5), and p2 before p1 (sortOrder 10)
+      expect(idxC).toBeLessThan(idxB);
+      expect(idxB).toBeLessThan(idxA);
+
+      // Update sort order directly
+      store.updateProduct(p1.id, { sortOrder: 2 });
+      const updatedList = store.listProducts('telegram-premium');
+      const newIdxA = updatedList.findIndex((x) => x.id === p1.id);
+      const newIdxB = updatedList.findIndex((x) => x.id === p2.id);
+      const newIdxC = updatedList.findIndex((x) => x.id === p3.id);
+
+      // Now p3 (1) < p1 (2) < p2 (5)
+      expect(newIdxC).toBeLessThan(newIdxA);
+      expect(newIdxA).toBeLessThan(newIdxB);
+
+      // Bulk reorder
+      store.reorderProducts([p2.id, p1.id, p3.id]);
+      expect(store.getProduct(p2.id)?.sortOrder).toBe(1);
+      expect(store.getProduct(p1.id)?.sortOrder).toBe(2);
+      expect(store.getProduct(p3.id)?.sortOrder).toBe(3);
+
+      const reorderedList = store.listProducts('telegram-premium');
+      const finalIdxA = reorderedList.findIndex((x) => x.id === p1.id);
+      const finalIdxB = reorderedList.findIndex((x) => x.id === p2.id);
+      const finalIdxC = reorderedList.findIndex((x) => x.id === p3.id);
+      expect(finalIdxB).toBeLessThan(finalIdxA);
+      expect(finalIdxA).toBeLessThan(finalIdxC);
+    });
   });
 
   describe('store - Vault Delivery Accounts', () => {

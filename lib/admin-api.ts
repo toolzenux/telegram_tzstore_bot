@@ -70,6 +70,7 @@ export async function preloadAllProducts(): Promise<void> {
         stock,
         status: (stock > 0 ? 'ACTIVE' : 'OOS') as 'ACTIVE' | 'OOS',
         logo: LOGO_OVERRIDES[slug] ?? `/logos/${slug}.svg`,
+        sortOrder: p.sortOrder,
       };
 
       productCache.set(p.id, { data: mapped, exp });

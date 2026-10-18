@@ -17,7 +17,7 @@ try {
   if (fs.existsSync(envPath)) {
     for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
       const m = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
-      if (m && !process.env[m[1]]) {
+      if (m) {
         let val = (m[2] || '').trim();
         if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
         process.env[m[1]] = val;
@@ -381,6 +381,7 @@ bot.command('start', async (ctx) => {
   const refParam = ctx.match ? String(ctx.match).trim() : undefined;
   const user = await getOrRegisterUser(from, refParam);
 
+  console.log(`[User Bot] >>> Received /start from ${from.id} (${from.username || from.first_name}). Active WEBAPP: ${WEBAPP}`);
   // Set chat menu button to WebApp if configured with HTTPS
   try {
     if (WEBAPP && WEBAPP.startsWith('https://')) {
@@ -392,8 +393,11 @@ bot.command('start', async (ctx) => {
           web_app: { url: WEBAPP },
         },
       });
+      console.log(`[User Bot] Updated chat menu button for chat ${ctx.chat.id} to ${WEBAPP}`);
     }
-  } catch {}
+  } catch (err) {
+    console.warn(`[User Bot] Failed to setChatMenuButton for ${ctx.chat.id}:`, err);
+  }
 
   await ctx.reply(formatWelcomeText(user.name, user.id, user.balance, user.referral), {
     parse_mode: 'HTML',
@@ -423,6 +427,7 @@ bot.callbackQuery(/^cat:(.+)$/, async (ctx) => {
   const slug = ctx.match![1];
   const allProds = store.allProducts?.() || PRODUCTS;
   const list = allProds.filter((p: any) => p.categorySlug === slug || (slug === 'tz-vip' && p.categorySlug === 'tz-vip'));
+  list.sort((a: any, b: any) => (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999));
   if (!list.length) {
     await ctx.answerCallbackQuery({ text: 'No products in this category yet', show_alert: false });
     return;

@@ -31,6 +31,8 @@ export async function GET(_: Request, { params }: { params: { slug: string } }) 
       seenTitles.add(key);
     }
   }
+
+  merged.sort((a, b) => (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999));
   
   return NextResponse.json(
     { products: merged, source: 'merged' },

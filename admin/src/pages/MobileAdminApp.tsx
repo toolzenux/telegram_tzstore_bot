@@ -18,7 +18,7 @@ import {
   tzGetProducts, tzGetCategories, tzCreateProduct, tzUpdateProduct,
   tzDeleteProduct, tzUploadPhoto, tzLogoUrl, tzVaultList, tzVaultAdd,
   tzVaultImport, tzVaultDelete, tzVaultUpdate, tzCreateCategory,
-  tzDeleteCategory, tzReorderCategories, tzAddStock, tzClearOrders, tzRefundOrder,
+  tzDeleteCategory, tzReorderCategories, tzReorderProducts, tzAddStock, tzClearOrders, tzRefundOrder,
   type TzProduct, type TzCategory, type VaultRow,
 } from '../tzstore';
 
@@ -166,6 +166,7 @@ export default function MobileAdminApp() {
   const [nPhoto, setNPhoto] = useState('');
   const [nPreview, setNPreview] = useState('');
   const [nTiers, setNTiers] = useState<Array<{ minQty: number; unitPrice: number }>>([]);
+  const [nSortOrder, setNSortOrder] = useState('');
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [savingProduct, setSavingProduct] = useState(false);
   const [productFormError, setProductFormError] = useState('');
@@ -182,6 +183,7 @@ export default function MobileAdminApp() {
   const [ePhoto, setEPhoto] = useState('');
   const [ePreview, setEPreview] = useState('');
   const [eTiers, setETiers] = useState<Array<{ minQty: number; unitPrice: number }>>([]);
+  const [eSortOrder, setESortOrder] = useState('1');
   const [eUploading, setEUploading] = useState(false);
   const [eSaving, setESaving] = useState(false);
   const [editError, setEditError] = useState('');
@@ -448,11 +450,12 @@ export default function MobileAdminApp() {
         stock: Number(nStock) || 0,
         logo: nPhoto || undefined,
         tiers: nTiers,
+        sortOrder: nSortOrder ? Number(nSortOrder) : undefined,
       });
       notify('Product added to TZ Store live catalog!', 'success');
       setCreatingProduct(false);
       setNTitle(''); setNCat(''); setNPrice(''); setNDesc(''); setNStock('0');
-      setNPhoto(''); setNPreview(''); setNTiers([]);
+      setNPhoto(''); setNPreview(''); setNTiers([]); setNSortOrder('');
       await refetchProds();
     } catch (e: any) {
       setProductFormError(e.message || 'Failed to create product');
@@ -479,6 +482,7 @@ export default function MobileAdminApp() {
         contents: eDesc,
         logo: ePhoto || undefined,
         tiers: eTiers,
+        sortOrder: Number(eSortOrder) || undefined,
       });
       notify('Product updated successfully', 'success');
       setEditingProduct(null);
@@ -792,11 +796,29 @@ export default function MobileAdminApp() {
     return o.status === orderFilter;
   });
 
-  const filteredProducts = allProducts.filter((p: any) => {
-    const matchCat = selectedCat === 'ALL' || p.categorySlug === selectedCat;
-    const matchSearch = !productSearch || p.title?.toLowerCase().includes(productSearch.toLowerCase()) || p.id?.toLowerCase().includes(productSearch.toLowerCase());
-    return matchCat && matchSearch;
-  });
+  const filteredProducts = allProducts
+    .filter((p: any) => {
+      const matchCat = selectedCat === 'ALL' || p.categorySlug === selectedCat;
+      const matchSearch = !productSearch || p.title?.toLowerCase().includes(productSearch.toLowerCase()) || p.id?.toLowerCase().includes(productSearch.toLowerCase());
+      return matchCat && matchSearch;
+    })
+    .sort((a, b) => (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999));
+
+  const handleMoveProduct = async (productId: string, dir: -1 | 1) => {
+    haptic('medium');
+    const ordered = filteredProducts.map((p) => p.id);
+    const i = ordered.indexOf(productId);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= ordered.length) return;
+    [ordered[i], ordered[j]] = [ordered[j], ordered[i]];
+    try {
+      await tzReorderProducts(ordered);
+      notify('Product order updated', 'success');
+      refetchProds();
+    } catch (e: any) {
+      notify(e.message || 'Reorder failed', 'error');
+    }
+  };
 
   const totalProductPages = Math.max(1, Math.ceil(filteredProducts.length / PRODUCTS_PER_PAGE));
   const paginatedProducts = filteredProducts.slice(
@@ -1872,7 +1894,30 @@ export default function MobileAdminApp() {
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <h3 className="font-extrabold text-xs text-white truncate max-w-[200px]">
+                            <div className="flex items-center gap-1">
+                              <span className="rounded-md bg-blue-500/20 text-blue-300 ring-1 ring-blue-500/30 px-1.5 py-0.5 text-[9px] font-black">
+                                #{p.sortOrder ?? (filteredProducts.findIndex((x) => x.id === p.id) + 1)}
+                              </span>
+                              <div className="flex items-center bg-slate-800 rounded p-0.5 border border-white/5">
+                                <button
+                                  type="button"
+                                  title="Move up (higher priority)"
+                                  onClick={(e) => { e.stopPropagation(); handleMoveProduct(p.id, -1); }}
+                                  className="p-0.5 text-slate-400 hover:text-white active:scale-90"
+                                >
+                                  <ChevronUp size={11} />
+                                </button>
+                                <button
+                                  type="button"
+                                  title="Move down (lower priority)"
+                                  onClick={(e) => { e.stopPropagation(); handleMoveProduct(p.id, 1); }}
+                                  className="p-0.5 text-slate-400 hover:text-white active:scale-90"
+                                >
+                                  <ChevronDown size={11} />
+                                </button>
+                              </div>
+                            </div>
+                            <h3 className="font-extrabold text-xs text-white truncate max-w-[170px]">
                               {p.title}
                             </h3>
                             <span className="rounded-md bg-slate-800 px-1.5 py-0.5 text-[9px] font-bold text-slate-400 uppercase">
@@ -1918,6 +1963,7 @@ export default function MobileAdminApp() {
                             setETitle(p.title);
                             setECat(p.categorySlug);
                             setEPrice(String(p.priceUsdt));
+                            setESortOrder(String(p.sortOrder ?? (filteredProducts.findIndex((x) => x.id === p.id) + 1)));
                             setEDesc(p.desc || '');
                             setEPhoto(p.logo || '');
                             setEPreview(p.logo || '');
@@ -2725,16 +2771,16 @@ export default function MobileAdminApp() {
                 />
               </div>
 
-              {/* Category & Price */}
-              <div className="grid grid-cols-2 gap-2">
+              {/* Category, Price, Priority Serial */}
+              <div className="grid grid-cols-3 gap-2">
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase">Category</label>
                   <select
                     value={nCat}
                     onChange={(e) => setNCat(e.target.value)}
-                    className="mt-1 w-full rounded-xl bg-slate-900 border border-white/10 px-2.5 py-2 text-xs text-white"
+                    className="mt-1 w-full rounded-xl bg-slate-900 border border-white/10 px-2 py-2 text-xs text-white"
                   >
-                    <option value="">Select category…</option>
+                    <option value="">Category…</option>
                     {allCategories.map((c) => (
                       <option key={c.slug} value={c.slug}>{c.name}</option>
                     ))}
@@ -2742,7 +2788,7 @@ export default function MobileAdminApp() {
                 </div>
 
                 <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">Price (USDT)</label>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Price ($)</label>
                   <input
                     type="number"
                     step="0.01"
@@ -2750,7 +2796,19 @@ export default function MobileAdminApp() {
                     placeholder="4.99"
                     value={nPrice}
                     onChange={(e) => setNPrice(e.target.value)}
-                    className="mt-1 w-full rounded-xl bg-slate-900 border border-white/10 px-3 py-2 text-xs text-white"
+                    className="mt-1 w-full rounded-xl bg-slate-900 border border-white/10 px-2.5 py-2 text-xs text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Priority #</label>
+                  <input
+                    type="number"
+                    min="1"
+                    placeholder="Next"
+                    value={nSortOrder}
+                    onChange={(e) => setNSortOrder(e.target.value)}
+                    className="mt-1 w-full rounded-xl bg-slate-900 border border-white/10 px-2.5 py-2 text-xs text-white"
                   />
                 </div>
               </div>
@@ -2876,14 +2934,14 @@ export default function MobileAdminApp() {
                 />
               </div>
 
-              {/* Category & Price */}
-              <div className="grid grid-cols-2 gap-2">
+              {/* Category, Price, Priority Serial */}
+              <div className="grid grid-cols-3 gap-2">
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase">Category</label>
                   <select
                     value={eCat}
                     onChange={(e) => setECat(e.target.value)}
-                    className="mt-1 w-full rounded-xl bg-slate-900 border border-white/10 px-2.5 py-2 text-xs text-white"
+                    className="mt-1 w-full rounded-xl bg-slate-900 border border-white/10 px-2 py-2 text-xs text-white"
                   >
                     {allCategories.map((c) => (
                       <option key={c.slug} value={c.slug}>{c.name}</option>
@@ -2899,7 +2957,18 @@ export default function MobileAdminApp() {
                     min="0"
                     value={ePrice}
                     onChange={(e) => setEPrice(e.target.value)}
-                    className="mt-1 w-full rounded-xl bg-slate-900 border border-white/10 px-3 py-2 text-xs text-white"
+                    className="mt-1 w-full rounded-xl bg-slate-900 border border-white/10 px-2.5 py-2 text-xs text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Priority #</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={eSortOrder}
+                    onChange={(e) => setESortOrder(e.target.value)}
+                    className="mt-1 w-full rounded-xl bg-slate-900 border border-white/10 px-2.5 py-2 text-xs text-white"
                   />
                 </div>
               </div>

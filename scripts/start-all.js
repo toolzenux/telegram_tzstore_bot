@@ -21,7 +21,7 @@ try {
   if (fs.existsSync(envPath)) {
     for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
       const m = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
-      if (m && !process.env[m[1]]) {
+      if (m) {
         let val = (m[2] || '').trim();
         if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
         process.env[m[1]] = val;
