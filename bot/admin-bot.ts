@@ -45,7 +45,7 @@ export const adminBot = token
   : null;
 
 function getAdminPortalUrl(): string {
-  const base = process.env.ADMIN_WEBAPP_URL || process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
+  const base = process.env.ADMIN_WEBAPP_URL || process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || 'https://telegram-tzstore-bot.onrender.com';
   return `${base.replace(/\/+$/, '')}/admin/mobile`;
 }
 

@@ -30,10 +30,10 @@ const bot = new Bot(process.env.BOT_TOKEN || 'test-token', {
     },
   },
 });
-const URL = process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
+const URL = process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || 'https://telegram-tzstore-bot.onrender.com';
 
 async function initMenuButton() {
-  const storeUrl = process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
+  const storeUrl = process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || 'https://telegram-tzstore-bot.onrender.com';
   const adminUrl = `${storeUrl.replace(/\/+$/, '')}/admin/mobile`;
 
   const adminIds = [

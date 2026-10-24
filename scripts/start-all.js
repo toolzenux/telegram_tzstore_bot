@@ -60,10 +60,16 @@ function runProcess(name, cmd, args, env = {}) {
   return proc;
 }
 
-// 1. Start Next.js Web App (Listens on Render's required PORT)
-const nextProc = runProcess('Next.js Web App', 'npx', ['next', 'start', '-p', port]);
+// 1. Start Next.js Web App (Listens on Render's required PORT and binds to 0.0.0.0)
+const nextProc = runProcess('Next.js Web App', 'npx', ['next', 'start', '-H', '0.0.0.0', '-p', port]);
 
-// 2. Start User Telegram Bot (Customer Storefront)
+// 2. Configure Telegram Bot Menu Buttons
+if (process.env.BOT_TOKEN) {
+  console.log(`[Render Runner] Setting up Telegram Bot Menu Buttons...`);
+  runProcess('Bot Menu Setup', 'npx', ['tsx', 'bot/menu-button.ts']);
+}
+
+// 3. Start User Telegram Bot (Customer Storefront)
 if (process.env.BOT_TOKEN) {
   console.log(`[Render Runner] BOT_TOKEN found. Launching User Store Bot...`);
   runProcess('User Store Bot', 'npx', ['tsx', 'bot/bot.ts']);
@@ -71,7 +77,7 @@ if (process.env.BOT_TOKEN) {
   console.warn(`[Render Runner] WARNING: BOT_TOKEN not found in environment. User Store Bot will not start.`);
 }
 
-// 3. Start Dedicated Admin Telegram Bot (Admin Management & Alerts)
+// 4. Start Dedicated Admin Telegram Bot (Admin Management & Alerts)
 if (process.env.ADMIN_BOT_TOKEN && process.env.ADMIN_BOT_TOKEN !== process.env.BOT_TOKEN) {
   console.log(`[Render Runner] ADMIN_BOT_TOKEN found. Launching Admin Operations Bot...`);
   runProcess('Admin Operations Bot', 'npx', ['tsx', 'bot/admin-bot.ts']);

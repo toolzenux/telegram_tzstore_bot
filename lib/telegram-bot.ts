@@ -129,7 +129,7 @@ export async function sendCustomerDelivery(
           .join('\n\n')
       : `<b>🔑 Activation Code / Link:</b>\n<code>${code ?? order.code ?? ''}</code>`;
 
-  const webAppUrl = process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
+  const webAppUrl = process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || 'https://telegram-tzstore-bot.onrender.com';
   const text =
     `🎉 <b>Order Delivered Successfully!</b>\n\n` +
     `📦 <b>Order ID:</b> <code>${order.id}</code>\n` +
