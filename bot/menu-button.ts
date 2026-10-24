@@ -36,13 +36,33 @@ async function initMenuButton() {
   const storeUrl = process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
   const adminUrl = `${storeUrl.replace(/\/+$/, '')}/admin/mobile`;
 
+  const adminIds = [
+    ...(process.env.ADMIN_USER_IDS || '').split(','),
+    ...(process.env.ADMIN_TG_IDS || '').split(','),
+    process.env.ADMIN_NOTIFY_CHAT_ID,
+  ]
+    .map((s) => s?.trim())
+    .filter(Boolean) as string[];
+
+  const uniqueAdminIds = Array.from(new Set(adminIds));
+
   if (process.env.BOT_TOKEN) {
     if (storeUrl.startsWith('https://')) {
       try {
-        await bot.api.setChatMenuButton({ menu_button: { type: 'web_app', text: 'Open Store', web_app: { url: storeUrl } } });
-        console.log(`[Store Bot] Menu button set to: ${storeUrl}`);
+        await bot.api.setChatMenuButton({ menu_button: { type: 'web_app', text: '🛍️ Open Store', web_app: { url: storeUrl } } });
+        console.log(`[Store Bot] Global Menu button set to: ${storeUrl}`);
       } catch (e: any) {
-        console.warn('[Store Bot] Failed to set menu button:', e?.message || e);
+        console.warn('[Store Bot] Failed to set global menu button:', e?.message || e);
+      }
+
+      for (const id of uniqueAdminIds) {
+        try {
+          await bot.api.setChatMenuButton({
+            chat_id: Number(id),
+            menu_button: { type: 'web_app', text: '🛍️ Open Store', web_app: { url: storeUrl } },
+          });
+          console.log(`[Store Bot] Chat ${id} menu button set to: ${storeUrl}`);
+        } catch {}
       }
     } else {
       console.log(`Note: URL ${storeUrl} is HTTP. Telegram Web App menu buttons require an HTTPS URL.`);
@@ -58,7 +78,17 @@ async function initMenuButton() {
         await adminBotInstance.api.setChatMenuButton({
           menu_button: { type: 'web_app', text: '🛠️ Admin Portal', web_app: { url: adminUrl } },
         });
-        console.log(`[Admin Bot] Menu button set to: ${adminUrl}`);
+        console.log(`[Admin Bot] Global Menu button set to: ${adminUrl}`);
+
+        for (const id of uniqueAdminIds) {
+          try {
+            await adminBotInstance.api.setChatMenuButton({
+              chat_id: Number(id),
+              menu_button: { type: 'web_app', text: '🛠️ Admin Portal', web_app: { url: adminUrl } },
+            });
+            console.log(`[Admin Bot] Chat ${id} menu button set to: ${adminUrl}`);
+          } catch {}
+        }
       } catch (e: any) {
         console.warn('[Admin Bot] Failed to set menu button:', e?.message || e);
       }

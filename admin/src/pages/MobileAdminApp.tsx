@@ -279,9 +279,12 @@ export default function MobileAdminApp() {
   const [changePwd, setChangePwd] = useState({ old: '', next: '' });
   const [savingPwd, setSavingPwd] = useState(false);
   const [mobileStoreName, setMobileStoreName] = useState('');
+  const [mobileStoreLogo, setMobileStoreLogo] = useState('');
   const [mobileSupportUrl, setMobileSupportUrl] = useState('');
   const [mobileChannelUrl, setMobileChannelUrl] = useState('');
   const [savingBranding, setSavingBranding] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement>(null);
 
   // Expanded deliveries in order card
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
@@ -369,6 +372,7 @@ export default function MobileAdminApp() {
   useEffect(() => {
     if (settingsData) {
       if (settingsData.storeName !== undefined) setMobileStoreName(String(settingsData.storeName || ''));
+      if (settingsData.storeLogo !== undefined) setMobileStoreLogo(String(settingsData.storeLogo || ''));
       if (settingsData.supportUrl !== undefined) setMobileSupportUrl(String(settingsData.supportUrl || ''));
       if (settingsData.channelUrl !== undefined) setMobileChannelUrl(String(settingsData.channelUrl || ''));
     }
@@ -378,15 +382,44 @@ export default function MobileAdminApp() {
     setSavingBranding(true);
     try {
       await api('/api/settings', { method: 'PUT', body: JSON.stringify({ key: 'storeName', value: mobileStoreName.trim() }) });
+      await api('/api/settings', { method: 'PUT', body: JSON.stringify({ key: 'storeLogo', value: mobileStoreLogo.trim() }) });
       await api('/api/settings', { method: 'PUT', body: JSON.stringify({ key: 'supportUrl', value: mobileSupportUrl.trim() }) });
       await api('/api/settings', { method: 'PUT', body: JSON.stringify({ key: 'channelUrl', value: mobileChannelUrl.trim() }) });
-      notify('Store profile and name updated successfully!', 'success');
-      window.dispatchEvent(new CustomEvent('tz:storeNameChanged', { detail: { storeName: mobileStoreName.trim() } }));
+      notify('Store profile and logo updated successfully!', 'success');
+      window.dispatchEvent(new CustomEvent('tz:storeNameChanged', { detail: { storeName: mobileStoreName.trim(), storeLogo: mobileStoreLogo.trim() } }));
       refetchSettings();
     } catch (e: any) {
       notify(e.message || 'Failed to save settings', 'error');
     } finally {
       setSavingBranding(false);
+    }
+  };
+
+  const handleLogoUpload = async (file: File | undefined) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      notify('Please select an image file', 'error');
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      notify('Logo must be under 2MB', 'error');
+      return;
+    }
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error('Read failed'));
+      reader.readAsDataURL(file);
+    });
+    setUploadingLogo(true);
+    try {
+      const j = await tzUploadPhoto(file.name, dataUrl);
+      setMobileStoreLogo(j.url);
+      notify('Store logo photo uploaded!', 'success');
+    } catch (err: any) {
+      notify(err.message || 'Upload failed', 'error');
+    } finally {
+      setUploadingLogo(false);
     }
   };
 
@@ -1520,9 +1553,22 @@ export default function MobileAdminApp() {
           {/* Brand & Status Pill */}
           <div className="flex items-center gap-2.5">
             <div className="relative">
-              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 text-sm font-black text-white shadow-lg shadow-blue-600/30 ring-1 ring-white/20">
-                TZ
-              </div>
+              {mobileStoreLogo ? (
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white dark:bg-slate-800 p-0.5 shadow-lg shadow-blue-600/30 ring-1 ring-white/20 overflow-hidden shrink-0">
+                  <img
+                    src={mobileStoreLogo}
+                    alt={mobileStoreName || 'TZ Store'}
+                    className="h-full w-full object-contain rounded-xl"
+                    onError={(e) => {
+                      (e.target as HTMLElement).style.display = 'none';
+                    }}
+                  />
+                </div>
+              ) : (
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 text-sm font-black text-white shadow-lg shadow-blue-600/30 ring-1 ring-white/20 shrink-0">
+                  {mobileStoreName ? mobileStoreName.slice(0, 2).toUpperCase() : 'TZ'}
+                </div>
+              )}
               <span className="absolute -bottom-0.5 -right-0.5 flex h-3 w-3">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                 <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 ring-2 ring-[#0c101d]" />
@@ -2518,12 +2564,70 @@ export default function MobileAdminApp() {
               <div className="rounded-2xl bg-slate-900/70 border border-white/5 p-4 space-y-3">
                 <h3 className="text-xs font-extrabold text-white flex items-center gap-1.5">
                   <Store size={14} className="text-emerald-400" />
-                  <span>Store Profile & Name</span>
+                  <span>Store Profile, Logo & Name</span>
                 </h3>
                 <p className="text-[11px] text-slate-400">
-                  Customizes the store name and support links across the customer storefront, Telegram Mini App header, About page, and Telegram bots.
+                  Customizes the store name, logo photo, and support links across the customer storefront, Telegram Mini App header, About page, and Telegram bots.
                 </p>
-                <div className="space-y-2">
+                <div className="space-y-3">
+                  {/* Logo Upload & Preview */}
+                  <div className="rounded-xl border border-white/10 bg-black/30 p-3 space-y-2">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase block">Store Logo / Brand Icon</label>
+                    <div className="flex items-center gap-3">
+                      <div className="h-14 w-14 shrink-0 rounded-xl border border-white/10 bg-white/5 p-1 flex items-center justify-center overflow-hidden">
+                        {mobileStoreLogo ? (
+                          <img
+                            src={mobileStoreLogo}
+                            alt="Logo"
+                            className="h-full w-full object-contain rounded-lg"
+                            onError={(e) => {
+                              (e.target as HTMLElement).style.opacity = '0.3';
+                            }}
+                          />
+                        ) : (
+                          <span className="text-base font-black text-blue-400">
+                            {mobileStoreName ? mobileStoreName.slice(0, 2).toUpperCase() : 'TZ'}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex-1 space-y-1.5 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => logoInputRef.current?.click()}
+                            disabled={uploadingLogo}
+                            className="rounded-lg bg-blue-600/30 hover:bg-blue-600/50 border border-blue-500/30 px-2.5 py-1.5 text-[11px] font-bold text-blue-300 active:scale-95 transition shrink-0"
+                          >
+                            {uploadingLogo ? 'Uploading…' : '📁 Upload Photo'}
+                          </button>
+                          {mobileStoreLogo && (
+                            <button
+                              type="button"
+                              onClick={() => setMobileStoreLogo('')}
+                              className="text-[11px] text-rose-400 hover:text-rose-300 font-semibold"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                        <input
+                          ref={logoInputRef}
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => handleLogoUpload(e.target.files?.[0])}
+                        />
+                        <input
+                          type="text"
+                          placeholder="Or paste direct image URL (https://...)"
+                          value={mobileStoreLogo}
+                          onChange={(e) => setMobileStoreLogo(e.target.value)}
+                          className="w-full rounded-lg bg-black/40 border border-white/10 px-2.5 py-1 text-[11px] text-white placeholder-slate-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
                   <div>
                     <label className="text-[10px] font-bold text-slate-400 uppercase">Store Name</label>
                     <input
@@ -2559,7 +2663,7 @@ export default function MobileAdminApp() {
                     disabled={savingBranding}
                     className="w-full mt-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 py-2.5 text-xs font-bold text-white transition active:scale-98"
                   >
-                    {savingBranding ? 'Saving…' : 'Save Store Branding'}
+                    {savingBranding ? 'Saving…' : 'Save Store Branding & Logo'}
                   </button>
                 </div>
               </div>

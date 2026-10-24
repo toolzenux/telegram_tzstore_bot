@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, get, post } from '../api';
 import { Button, Card, Field, Input, Skeleton, toast } from '../ui';
+import { Upload, ImagePlus, X, Sparkles } from 'lucide-react';
+import { tzUploadPhoto } from '../tzstore';
 
 const TABS = ['General', 'Bot', 'Payments', 'Referral', 'Wallet', 'Security'] as const;
 
@@ -13,11 +15,39 @@ export default function Settings() {
   const [pwd, setPwd] = useState({ cur: '', next: '' });
   const [testingBinance, setTestingBinance] = useState(false);
   const [binanceTestResult, setBinanceTestResult] = useState<any>(null);
+  const logoFileRef = useRef<HTMLInputElement>(null);
+  const [logoUploading, setLogoUploading] = useState(false);
+
+  const [saving, setSaving] = useState(false);
+  const [savedNotice, setSavedNotice] = useState<string | null>(null);
+
   const settings = useQuery({ queryKey: ['settings'], queryFn: () => get('/api/settings') as Promise<Record<string, unknown>> });
   const s = settings.data ?? {};
   const val = (k: string) => displaySettingValue(form, s, k);
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const secretPh = (k: string) => secretPlaceholder(s[k]);
+
+  async function onLogoFile(f: File | undefined) {
+    if (!f) return;
+    if (!f.type.startsWith('image/')) { toast('Please choose an image file (PNG/JPG/SVG/WebP)'); return; }
+    if (f.size > 2 * 1024 * 1024) { toast('Image must be under 2MB'); return; }
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result));
+      r.onerror = () => reject(new Error('read failed'));
+      r.readAsDataURL(f);
+    });
+    setLogoUploading(true);
+    try {
+      const j = await tzUploadPhoto(f.name, dataUrl);
+      set('storeLogo', j.url);
+      toast('✅ Logo uploaded successfully');
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'upload failed');
+    } finally {
+      setLogoUploading(false);
+    }
+  }
 
   async function testBinance() {
     setTestingBinance(true);
@@ -39,19 +69,42 @@ export default function Settings() {
   }
 
   async function save(keys: string[], parseJson: string[] = []) {
+    setSaving(true);
+    setSavedNotice(null);
     try {
+      const settingsPayload: Record<string, unknown> = {};
       for (const k of keys) {
         const raw = normalizeSettingInput(val(k));
         if (shouldSkipSecret(k, raw)) continue; // keep saved secret
         const value = parseJson.includes(k) ? JSON.parse(raw || '{}') : (isNaN(Number(raw)) || raw === '' ? raw : Number(raw));
-        await api('/api/settings', { method: 'PUT', body: JSON.stringify({ key: k, value }) });
+        settingsPayload[k] = value;
       }
-      if (keys.includes('storeName')) {
-        const newName = val('storeName');
-        window.dispatchEvent(new CustomEvent('tz:storeNameChanged', { detail: { storeName: newName } }));
+      
+      // Batch save all settings in one fast parallel request
+      await api('/api/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ settings: settingsPayload }),
+      });
+
+      if (keys.includes('storeName') || keys.includes('storeLogo')) {
+        const newName = val('storeName') || 'TZ Store';
+        const newLogo = val('storeLogo') || '';
+        window.dispatchEvent(new CustomEvent('tz:storeNameChanged', { detail: { storeName: newName, storeLogo: newLogo } }));
       }
-      toast('✅ Settings saved successfully'); setForm({}); settings.refetch();
-    } catch (e) { toast(e instanceof Error ? e.message : 'failed'); }
+      
+      setSavedNotice('✅ Settings saved successfully!');
+      toast('✅ Settings saved successfully');
+      setForm({});
+      settings.refetch();
+      setTimeout(() => setSavedNotice(null), 4000);
+    } catch (e: any) {
+      console.error('Save settings error:', e);
+      const msg = e instanceof Error ? e.message : 'Failed to save settings';
+      setSavedNotice(`❌ Error: ${msg}`);
+      toast(`❌ ${msg}`);
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function changePwd() {
@@ -71,21 +124,115 @@ export default function Settings() {
           {tab === 'General' && <Card><div className="space-y-4">
             <div>
               <h3 className="font-bold text-base">Store Profile & Branding</h3>
-              <p className="text-xs text-slate-500">Configure your store name, customer support, and official announcement channels. These reflect dynamically across your customer storefront, Telegram Mini App header, About page, and Telegram bots.</p>
+              <p className="text-xs text-slate-500">Configure your store name, logo, customer support, and official announcement channels. These reflect dynamically across your customer storefront, Telegram Mini App header, About page, and Telegram bots.</p>
             </div>
+
+            {/* Store Logo Section */}
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4 dark:border-slate-800 dark:bg-slate-900/50">
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-2">Store Logo / Brand Icon</label>
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl border-2 border-slate-200 bg-white p-1 shadow-xs dark:border-slate-700 dark:bg-slate-800">
+                  {val('storeLogo') ? (
+                    <img
+                      src={val('storeLogo')}
+                      alt="Store logo"
+                      className="h-full w-full object-contain"
+                      onError={(e) => {
+                        (e.target as HTMLElement).style.opacity = '0.3';
+                      }}
+                    />
+                  ) : (
+                    <span className="text-lg font-black text-blue-600 dark:text-blue-400">
+                      {val('storeName') ? val('storeName').slice(0, 2).toUpperCase() : 'TZ'}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex-1 min-w-[240px] space-y-2">
+                  <div className="flex gap-2">
+                    <Input
+                      value={val('storeLogo')}
+                      onChange={(e) => set('storeLogo', e.target.value)}
+                      placeholder="Paste Image URL (https://... or /logos/brand.svg)"
+                      className="text-xs"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => logoFileRef.current?.click()}
+                      disabled={logoUploading}
+                      className="shrink-0 text-xs"
+                    >
+                      <Upload size={14} className="mr-1" />
+                      {logoUploading ? 'Uploading…' : 'Upload'}
+                    </Button>
+                    {val('storeLogo') && (
+                      <button
+                        type="button"
+                        onClick={() => set('storeLogo', '')}
+                        className="rounded-xl px-2 py-1 text-xs text-slate-400 hover:text-red-500"
+                        title="Remove logo"
+                      >
+                        <X size={16} />
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    ref={logoFileRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => onLogoFile(e.target.files?.[0])}
+                  />
+                  <p className="text-[11px] text-slate-400">
+                    PNG, JPG, SVG, or WebP under 2MB. Or paste a direct image URL from any web host.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <div className="grid gap-3 md:grid-cols-2">
               <Field label="Store Name"><Input value={val('storeName')} onChange={(e) => set('storeName', e.target.value)} placeholder="e.g. TZ Store" /></Field>
               <Field label="Support URL"><Input value={val('supportUrl')} onChange={(e) => set('supportUrl', e.target.value)} placeholder="https://t.me/TzStore_Support" /></Field>
               <Field label="Channel URL"><Input value={val('channelUrl')} onChange={(e) => set('channelUrl', e.target.value)} placeholder="https://t.me/TZStoreChannel" /></Field>
             </div>
-            <div><Button onClick={() => save(['storeName', 'supportUrl', 'channelUrl'])}>Save general settings</Button></div>
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              <Button
+                onClick={() => save(['storeName', 'storeLogo', 'supportUrl', 'channelUrl'])}
+                disabled={saving}
+                className="flex items-center gap-2"
+              >
+                {saving ? (
+                  <>
+                    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                    <span>Saving store branding & settings…</span>
+                  </>
+                ) : (
+                  <span>Save store branding & settings</span>
+                )}
+              </Button>
+              {savedNotice && (
+                <span className={`text-xs font-bold px-3 py-1.5 rounded-xl transition-all animate-in fade-in duration-200 ${
+                  savedNotice.startsWith('✅')
+                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800'
+                    : 'bg-red-50 text-red-700 border border-red-200'
+                }`}>
+                  {savedNotice}
+                </span>
+              )}
+            </div>
           </div></Card>}
           {tab === 'Bot' && <Card><div className="grid gap-3 md:grid-cols-2">
             <Field label="Bot token"><Input type="password" value={val('botToken')} onChange={(e) => set('botToken', e.target.value)} placeholder={secretPh('botToken')} /></Field>
             <Field label="Admin notify chat id"><Input value={val('adminNotifyChatId')} onChange={(e) => set('adminNotifyChatId', e.target.value)} /></Field>
             <Field label="Support URL"><Input value={val('supportUrl')} onChange={(e) => set('supportUrl', e.target.value)} /></Field>
             <Field label="Channel URL"><Input value={val('channelUrl')} onChange={(e) => set('channelUrl', e.target.value)} /></Field>
-            <div className="md:col-span-2"><Button onClick={() => save(['botToken', 'adminNotifyChatId', 'supportUrl', 'channelUrl'])}>Save bot settings</Button></div>
+            <div className="md:col-span-2 flex flex-wrap items-center gap-3">
+              <Button onClick={() => save(['botToken', 'adminNotifyChatId', 'supportUrl', 'channelUrl'])} disabled={saving}>
+                {saving ? 'Saving…' : 'Save bot settings'}
+              </Button>
+              {savedNotice && <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">{savedNotice}</span>}
+            </div>
           </div></Card>}
           {tab === 'Payments' && <div className="space-y-3">
             <Card>

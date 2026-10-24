@@ -38,16 +38,27 @@ function triggerHaptic() {
   } catch {}
 }
 
-function Logo({ compact = false, storeName = 'TZ Store' }: { compact?: boolean; storeName?: string }) {
+function Logo({ compact = false, storeName = 'TZ Store', storeLogo = '' }: { compact?: boolean; storeName?: string; storeLogo?: string }) {
   const initials = storeName ? storeName.slice(0, 2).toUpperCase() : 'TZ';
   return (
     <Link to="/" className="mb-6 flex items-center gap-2.5">
-      <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 text-sm font-black tracking-tight text-white shadow-sm">
-        {initials}
-      </span>
+      {storeLogo ? (
+        <img
+          src={storeLogo}
+          alt={storeName}
+          className="h-9 w-9 rounded-xl object-contain bg-white dark:bg-slate-800 p-0.5 border border-slate-200 dark:border-slate-700 shadow-sm shrink-0"
+          onError={(e) => {
+            (e.target as HTMLElement).style.display = 'none';
+          }}
+        />
+      ) : (
+        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 text-sm font-black tracking-tight text-white shadow-sm shrink-0">
+          {initials}
+        </span>
+      )}
       {!compact && (
-        <span className="leading-tight">
-          <span className="block text-[15px] font-extrabold tracking-tight">{storeName || 'TZ Store'}</span>
+        <span className="leading-tight min-w-0">
+          <span className="block text-[15px] font-extrabold tracking-tight truncate">{storeName || 'TZ Store'}</span>
           <span className="block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Admin</span>
         </span>
       )}
@@ -106,6 +117,7 @@ export default function Layout() {
   }, [theme]);
 
   const [storeName, setStoreName] = useState('TZ Store');
+  const [storeLogo, setStoreLogo] = useState('');
 
   const refreshBranding = () => {
     fetch('/api/settings/public')
@@ -115,6 +127,9 @@ export default function Layout() {
           setStoreName(d.storeName);
           document.title = `${d.storeName} Admin`;
         }
+        if (typeof d?.storeLogo === 'string') {
+          setStoreLogo(d.storeLogo);
+        }
       })
       .catch(() => {});
   };
@@ -122,11 +137,15 @@ export default function Layout() {
   useEffect(() => {
     refreshBranding();
     const handleBrandingChange = (e: Event) => {
-      const custom = e as CustomEvent<{ storeName?: string }>;
+      const custom = e as CustomEvent<{ storeName?: string; storeLogo?: string }>;
       if (custom.detail?.storeName) {
         setStoreName(custom.detail.storeName);
         document.title = `${custom.detail.storeName} Admin`;
-      } else {
+      }
+      if (custom.detail?.storeLogo !== undefined) {
+        setStoreLogo(custom.detail.storeLogo);
+      }
+      if (!custom.detail?.storeName && custom.detail?.storeLogo === undefined) {
         refreshBranding();
       }
     };
@@ -146,7 +165,7 @@ export default function Layout() {
       {/* Desktop Sidebar */}
       {sidebar && (
         <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 bg-white p-4 shadow-sm dark:bg-slate-900 dark:shadow-none dark:ring-1 dark:ring-slate-800 md:block">
-          <Logo storeName={storeName} />
+          <Logo storeName={storeName} storeLogo={storeLogo} />
           <NavList />
           <div className="mt-6 rounded-xl bg-slate-50 p-3 text-xs text-slate-500 dark:bg-slate-800/60">
             <div className="flex items-center gap-1.5 font-semibold text-slate-700 dark:text-slate-200">
@@ -176,11 +195,22 @@ export default function Layout() {
           <aside className="absolute right-0 top-0 h-full w-[85%] max-w-xs overflow-y-auto bg-white p-5 shadow-2xl transition-transform dark:bg-slate-900">
             <div className="mb-5 flex items-center justify-between border-b border-slate-100 pb-3 dark:border-slate-800">
               <div className="flex items-center gap-2.5">
-                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 text-xs font-black text-white shadow-sm">
-                  TZ
-                </span>
+                {storeLogo ? (
+                  <img
+                    src={storeLogo}
+                    alt={storeName}
+                    className="h-9 w-9 rounded-xl object-contain bg-white dark:bg-slate-800 p-0.5 border border-slate-200 dark:border-slate-700 shadow-sm shrink-0"
+                    onError={(e) => {
+                      (e.target as HTMLElement).style.display = 'none';
+                    }}
+                  />
+                ) : (
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 text-xs font-black text-white shadow-sm shrink-0">
+                    {storeName ? storeName.slice(0, 2).toUpperCase() : 'TZ'}
+                  </span>
+                )}
                 <div>
-                  <div className="text-sm font-extrabold tracking-tight">{storeName || 'TZ Store'} Admin</div>
+                  <div className="text-sm font-extrabold tracking-tight truncate max-w-[170px]">{storeName || 'TZ Store'} Admin</div>
                   <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Mobile Portal</div>
                 </div>
               </div>

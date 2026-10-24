@@ -7,8 +7,8 @@ import { Button, Card, Input, Field } from '../ui';
 const BASE = (import.meta as unknown as { env: Record<string, string> }).env?.VITE_API_URL ?? '';
 
 export default function Login() {
-  const [email, setEmail] = useState('admin@tzstore.io');
-  const [password, setPassword] = useState('Admin@123');
+  const [email, setEmail] = useState('toolzenux@gmail.com');
+  const [password, setPassword] = useState('Toolzenux#@');
   const [err, setErr] = useState('');
   const nav = useNavigate();
   const setAdmin = useStore((s) => s.setAdmin);

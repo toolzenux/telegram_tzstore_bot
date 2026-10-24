@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
+    "db:setup": "prisma db push && tsx prisma/seed.ts",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit.test.ts",
     "test:fork": "vitest run tests/fork.test.ts",

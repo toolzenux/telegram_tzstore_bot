@@ -5,6 +5,7 @@ import { store } from '@/lib/store';
 
 export async function GET() {
   let storeName = store.getSetting<string>('storeName') || process.env.NEXT_PUBLIC_STORE_NAME || 'TZ Store';
+  let storeLogo = store.getSetting<string>('storeLogo') || process.env.NEXT_PUBLIC_STORE_LOGO || '';
   let supportUrl = store.getSetting<string>('supportUrl') || process.env.NEXT_PUBLIC_SUPPORT_URL || 'https://t.me/TzStore_Support';
   let channelUrl = store.getSetting<string>('channelUrl') || process.env.NEXT_PUBLIC_CHANNEL_URL || 'https://t.me/TZStoreChannel';
 
@@ -12,11 +13,14 @@ export async function GET() {
   if (prisma) {
     try {
       const rows = await prisma.setting.findMany({
-        where: { key: { in: ['storeName', 'supportUrl', 'channelUrl'] } },
+        where: { key: { in: ['storeName', 'supportUrl', 'channelUrl', 'storeLogo'] } },
       });
       for (const row of rows) {
         if (row.key === 'storeName' && typeof row.value === 'string' && row.value.trim()) {
           storeName = row.value.trim();
+        }
+        if (row.key === 'storeLogo' && typeof row.value === 'string' && row.value.trim()) {
+          storeLogo = row.value.trim();
         }
         if (row.key === 'supportUrl' && typeof row.value === 'string' && row.value.trim()) {
           supportUrl = row.value.trim();
@@ -32,6 +36,7 @@ export async function GET() {
 
   return NextResponse.json({
     storeName,
+    storeLogo,
     supportUrl,
     channelUrl,
   });

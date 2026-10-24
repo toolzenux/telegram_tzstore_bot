@@ -7,6 +7,7 @@ import { Info, Headphones, Send, ShieldCheck, Zap } from 'lucide-react';
 
 export default function About() {
   const [storeName, setStoreName] = useState('TZ Store');
+  const [storeLogo, setStoreLogo] = useState('');
   const [supportUrl, setSupportUrl] = useState('https://t.me/TzStore_Support');
   const [channelUrl, setChannelUrl] = useState('https://t.me/TZStoreChannel');
 
@@ -15,6 +16,7 @@ export default function About() {
       .then((r) => r.json())
       .then((d) => {
         if (d?.storeName) setStoreName(d.storeName);
+        if (typeof d?.storeLogo === 'string') setStoreLogo(d.storeLogo);
         if (d?.supportUrl) setSupportUrl(d.supportUrl);
         if (d?.channelUrl) setChannelUrl(d.channelUrl);
       })
@@ -28,8 +30,19 @@ export default function About() {
     <main className="space-y-3 pt-2 pb-6">
       <div className="rounded-[20px] bg-white p-5 shadow-[0_2px_12px_rgba(0,0,0,0.05)] border border-black/[0.04] space-y-4">
         <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-[#2481CC]/10 text-[#2481CC] flex items-center justify-center text-xl shrink-0">
-            <Info size={22} />
+          <div className="w-11 h-11 rounded-2xl bg-[#2481CC]/10 text-[#2481CC] flex items-center justify-center text-xl shrink-0 overflow-hidden border border-black/[0.06]">
+            {storeLogo ? (
+              <img
+                src={storeLogo}
+                alt={storeName}
+                className="w-full h-full object-contain p-1"
+                onError={(e) => {
+                  (e.target as HTMLElement).style.display = 'none';
+                }}
+              />
+            ) : (
+              <Info size={22} />
+            )}
           </div>
           <div>
             <h1 className="text-[17px] font-extrabold text-gray-900 leading-tight">About {storeName}</h1>

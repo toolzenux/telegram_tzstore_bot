@@ -15,7 +15,7 @@ backend/
   Dockerfile
   package.json
   prisma/schema.prisma      # Admin, User, Category, Product, StockItem, Order, WalletTransaction, BinancePayment, Broadcast, Setting, AuditLog
-  prisma/seed.ts            # 16 categories + admin@tzstore.io / Admin@123
+  prisma/seed.ts            # 16 categories + toolzenux@gmail.com / Toolzenux#@
   src/
     index.ts                # helmet, cors, rate-limit, pino, swagger /docs, broadcast worker
     env.ts                  # zod env validation
@@ -75,7 +75,7 @@ See `backend/prisma/schema.prisma`. Key points:
 - `Setting(key unique, value Json)` stores botToken, binance keys, referralPercent, support/channel URLs, manual addresses.
 - `AuditLog` on every mutating admin action.
 
-Seed: `backend/prisma/seed.ts` creates the 16 categories (GitHub, CapCut, Grok, Canva, ChatGPT, Gemini, Claude, Email, TZ VIP, YouTube, Muse AI, Telegram Premium, Figma, VPN, Duolingo, Leonardo AI) + super admin `admin@tzstore.io / Admin@123` + default settings.
+Seed: `backend/prisma/seed.ts` creates the 16 categories (GitHub, CapCut, Grok, Canva, ChatGPT, Gemini, Claude, Email, TZ VIP, YouTube, Muse AI, Telegram Premium, Figma, VPN, Duolingo, Leonardo AI) + super admin `toolzenux@gmail.com / Toolzenux#@` + default settings.
 
 ## .env.example
 
@@ -86,7 +86,7 @@ See `.env.example` at repo root. Copy to `.env` + `backend/.env` + `admin/.env` 
 1. `cp .env.example .env` — fill `BOT_TOKEN` (BotFather), `JWT_*_SECRET` (32+ chars), `DATABASE_URL=postgresql://tz:tzsecret@localhost:5432/tzstore`.
 2. Start infra: `docker compose up -d postgres redis` (or use local Postgres/Redis, set `REDIS_URL`).
 3. Backend: `cd backend && npm install && npx prisma db push --schema=prisma/schema.prisma && npm run db:seed && npm run dev` → API on `:4000`, docs on `/docs`, health on `/health`.
-4. Admin: `cd ../admin && npm install && echo "VITE_API_URL=http://localhost:4000" > .env && npm run dev` → panel on `http://localhost:5173`, login with `admin@tzstore.io / Admin@123`.
+4. Admin: `cd ../admin && npm install && echo "VITE_API_URL=http://localhost:4000" > .env && npm run dev` → panel on `http://localhost:5173`, login with `toolzenux@gmail.com / Toolzenux#@`.
 5. Telegram webhook (dev): `cloudflared tunnel --url http://localhost:4000` → set `API_PUBLIC_URL` to tunnel URL, then `POST https://api.telegram.org/bot<BOT_TOKEN>/setWebhook?url=<API_PUBLIC_URL>/webhooks/telegram`.
 6. Binance payments — TWO modes (Settings → Payments tab):
    - **Personal account (recommended, no merchant needed):** put your personal Binance **UID** (e.g. `1134278389`) in `BINANCE_UID`. Buyers send USDT to that UID and submit the Binance Order ID / TxID. In `/payments` click **🤖 Auto-verify**: the backend checks your Spot deposit history (`GET /sapi/v1/capital/deposit/hisrec`, HMAC-SHA256) for the order amount (+TXID) and on match marks PAID → auto-delivery + referral commission + Telegram notify. Needs a Spot API key/secret (api.binance.com → API Management → enable **Spot**, restrict IP). UID-to-UID internal transfers are invisible to any API → one-tap manual Approve stays as fallback.

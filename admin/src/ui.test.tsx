@@ -49,7 +49,7 @@ describe('Login page', () => {
   it('renders email + password with dev defaults and no 2FA field', () => {
     render(<MemoryRouter><Login /></MemoryRouter>);
     expect(screen.getByText('TZ Store Admin')).toBeTruthy();
-    const email = screen.getByDisplayValue('admin@tzstore.io');
+    const email = screen.getByDisplayValue('toolzenux@gmail.com');
     expect(email).toBeTruthy();
     expect(screen.queryByPlaceholderText('••••••')).toBeNull();
     expect(screen.queryByText(/2FA/i)).toBeNull();

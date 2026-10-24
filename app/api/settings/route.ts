@@ -44,46 +44,73 @@ export async function GET(req: Request) {
 export async function PUT(req: Request) {
   const admin = await getAdminFromRequest(req);
   if (!admin) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  if (admin.role !== 'SUPER_ADMIN' && admin.role !== 'MANAGER') {
+  if (admin.role !== 'SUPER_ADMIN' && admin.role !== 'MANAGER' && (admin.role as string) !== 'ADMIN') {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   }
 
   const json = await req.json().catch(() => ({}));
-  const parsed = settingSchema.safeParse(json);
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  
+  // Extract list of key/value pairs (supports single key/value, settings object, or items array)
+  let entries: Array<{ key: string; value: unknown }> = [];
+  if (json && typeof json === 'object') {
+    if (typeof (json as any).key === 'string' && (json as any).key.trim()) {
+      entries.push({ key: (json as any).key.trim(), value: (json as any).value });
+    } else if ((json as any).settings && typeof (json as any).settings === 'object' && !Array.isArray((json as any).settings)) {
+      for (const [k, v] of Object.entries((json as any).settings)) {
+        if (typeof k === 'string' && k.trim()) {
+          entries.push({ key: k.trim(), value: v });
+        }
+      }
+    } else if (Array.isArray((json as any).items)) {
+      for (const item of (json as any).items) {
+        if (item && typeof item.key === 'string' && item.key.trim()) {
+          entries.push({ key: item.key.trim(), value: item.value });
+        }
+      }
+    }
+  }
+
+  if (entries.length === 0) {
+    return NextResponse.json({ error: 'Invalid settings payload: provide key/value or settings object' }, { status: 400 });
   }
 
   const prisma = db();
-  if (!prisma) return NextResponse.json({ error: 'database unavailable' }, { status: 503 });
+  const clientIp = req.headers.get('x-forwarded-for') || '';
 
-  if (SECRET_KEYS.has(parsed.data.key) && parsed.data.value === '••••••') {
-    return NextResponse.json({ ok: true });
-  }
+  // Process all entries concurrently for instant response
+  await Promise.all(
+    entries.map(async ({ key, value }) => {
+      if (SECRET_KEYS.has(key) && value === '••••••') {
+        return;
+      }
 
-  try {
-    const before = await prisma.setting.findUnique({ where: { key: parsed.data.key } });
-    const jsonVal = parsed.data.value === null
-      ? Prisma.JsonNull
-      : (parsed.data.value as Prisma.InputJsonValue);
+      // Always update in-memory store for instant zero-latency reading
+      store.setSetting(key, value);
 
-    await prisma.setting.upsert({
-      where: { key: parsed.data.key },
-      update: { value: jsonVal },
-      create: { key: parsed.data.key, value: jsonVal },
-    });
+      if (prisma) {
+        try {
+          const jsonVal = value === null
+            ? Prisma.JsonNull
+            : (value as Prisma.InputJsonValue);
 
-    const isSecret = SECRET_KEYS.has(parsed.data.key);
-    const auditBefore = isSecret ? '••••••' : before?.value;
-    const auditAfter = isSecret ? '••••••' : parsed.data.value;
-    const clientIp = req.headers.get('x-forwarded-for') || '';
-    await audit(admin.id, 'setting:update', 'setting', parsed.data.key, auditBefore, auditAfter, clientIp);
+          const before = await prisma.setting.findUnique({ where: { key } }).catch(() => null);
 
-    store.setSetting(parsed.data.key, parsed.data.value);
-    return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    console.error('Settings PUT error:', e);
-    store.setSetting(parsed.data.key, parsed.data.value);
-    return NextResponse.json({ ok: true });
-  }
+          await prisma.setting.upsert({
+            where: { key },
+            update: { value: jsonVal },
+            create: { key, value: jsonVal },
+          });
+
+          const isSecret = SECRET_KEYS.has(key);
+          const auditBefore = isSecret ? '••••••' : before?.value;
+          const auditAfter = isSecret ? '••••••' : value;
+          audit(admin.id, 'setting:update', 'setting', key, auditBefore, auditAfter, clientIp).catch(() => null);
+        } catch (dbErr) {
+          console.warn(`[Settings] DB upsert failed for key "${key}", file store updated:`, dbErr);
+        }
+      }
+    })
+  );
+
+  return NextResponse.json({ ok: true, count: entries.length });
 }

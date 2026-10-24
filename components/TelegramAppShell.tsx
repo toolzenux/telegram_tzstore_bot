@@ -13,6 +13,7 @@ export function TelegramAppShell({ children }: { children: React.ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [user, setUser] = useState<{ name: string; username?: string; photo?: string } | null>(null);
   const [storeName, setStoreName] = useState('TZ Store');
+  const [storeLogo, setStoreLogo] = useState('');
   const [supportUrl, setSupportUrl] = useState('https://t.me/TzStore_Support');
 
   useEffect(() => {
@@ -20,6 +21,7 @@ export function TelegramAppShell({ children }: { children: React.ReactNode }) {
       .then((r) => r.json())
       .then((d) => {
         if (d?.storeName) setStoreName(d.storeName);
+        if (d?.storeLogo) setStoreLogo(d.storeLogo);
         if (d?.supportUrl) setSupportUrl(d.supportUrl);
       })
       .catch(() => {});
@@ -120,6 +122,17 @@ export function TelegramAppShell({ children }: { children: React.ReactNode }) {
                 >
                   <ChevronLeft size={22} />
                 </button>
+              ) : storeLogo ? (
+                <div className="w-8 h-8 rounded-full bg-white/20 p-0.5 flex items-center justify-center shadow-inner shrink-0 overflow-hidden">
+                  <img
+                    src={storeLogo}
+                    alt={storeName}
+                    className="w-full h-full object-contain rounded-full"
+                    onError={(e) => {
+                      (e.target as HTMLElement).style.display = 'none';
+                    }}
+                  />
+                </div>
               ) : (
                 <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center shadow-inner shrink-0 text-white">
                   <ShoppingBag size={16} />

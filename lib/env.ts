@@ -11,7 +11,7 @@ const schema = z.object({
 });
 export const env = schema.parse({
   BOT_TOKEN: process.env.BOT_TOKEN,
-  JWT_SECRET: process.env.JWT_SECRET,
+  JWT_SECRET: process.env.JWT_SECRET || process.env.JWT_ACCESS_SECRET,
   JWT_TTL_SECONDS: process.env.JWT_TTL_SECONDS,
   ENABLE_STARS: process.env.ENABLE_STARS,
   ENABLE_TRC20: process.env.ENABLE_TRC20,

@@ -1,7 +1,9 @@
 node_modules/
 .next/
-.data-store.json
+.data-store*.json
 .env
+.env*.local
+!.env.example
 *.log
 tsconfig.tsbuildinfo
 

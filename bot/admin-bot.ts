@@ -351,6 +351,36 @@ if (adminBot) {
     await ctx.answerCallbackQuery().catch(() => {});
   });
 
+  // Callback: Sales & KPIs
+  adminBot.callbackQuery('admin:stats', async (ctx) => {
+    if (!(await isAuthorizedAdmin(ctx.from.id))) {
+      await ctx.answerCallbackQuery({ text: 'Unauthorized' }).catch(() => {});
+      return;
+    }
+    const storeName = await getAdminStoreName();
+    const { ordersCount, revenue, pendingOrders, pendingDeposits, usersCount } = await getLiveKpis();
+    const kb = new InlineKeyboard();
+    const portalUrl = getAdminPortalUrl();
+    const tokenParam = ctx.from?.id ? `token=${getDirectAdminToken(ctx.from.id)}` : '';
+    const authenticatedUrl = tokenParam ? `${portalUrl}?${tokenParam}` : portalUrl;
+    if (portalUrl.startsWith('https://')) {
+      kb.row({ text: '📊 View Interactive Charts', web_app: { url: authenticatedUrl } });
+    }
+    kb.row({ text: '🔙 Back to Hub', callback_data: 'admin:refresh' });
+
+    const text =
+      `📊 <b>${storeName} — Financial & Operational Analytics</b>\n\n` +
+      `💰 <b>Total Cumulative Revenue:</b> $${revenue.toFixed(2)} USDT\n` +
+      `📦 <b>All-Time Orders:</b> ${ordersCount}\n` +
+      `⏳ <b>Pending Orders:</b> ${pendingOrders}\n` +
+      `💳 <b>Pending Deposit Sessions:</b> ${pendingDeposits}\n` +
+      `👤 <b>Total Registered Customers:</b> ${usersCount}\n\n` +
+      `<i>Tap below to inspect real-time sales curves in the Mobile Admin Mini App.</i>`;
+
+    await safeEditMessageText(ctx, text, { parse_mode: 'HTML', reply_markup: kb });
+    await ctx.answerCallbackQuery().catch(() => {});
+  });
+
   // Command: /stats
   adminBot.command('stats', async (ctx) => {
     const storeName = await getAdminStoreName();
@@ -358,6 +388,7 @@ if (adminBot) {
       await ctx.reply(`⛔ <b>Access Denied:</b> This bot is strictly reserved for ${storeName} administrators.`, { parse_mode: 'HTML' });
       return;
     }
+    const { ordersCount, revenue, pendingOrders, pendingDeposits, usersCount } = await getLiveKpis();
     const kb = new InlineKeyboard();
     const portalUrl = getAdminPortalUrl();
     const tokenParam = ctx.from?.id ? `token=${getDirectAdminToken(ctx.from.id)}` : '';

@@ -1,9 +1,118 @@
 import { useMemo, useRef, useState, Fragment } from 'react';
-import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Pencil, Package, Plus, ImagePlus, X, KeyRound, Eye, EyeOff, Trash2, Copy, Upload, Search, Smartphone, Layers, CheckCircle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Pencil, Package, Plus, ImagePlus, X, KeyRound, Eye, EyeOff, Trash2, Copy, Upload, Search, Smartphone, Layers, CheckCircle, Sparkles } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useReactTable, getCoreRowModel, getPaginationRowModel, flexRender, createColumnHelper } from '@tanstack/react-table';
 import { tzGetProducts, tzGetCategories, tzCreateProduct, tzCreateCategory, tzUpdateProduct, tzDeleteProduct, tzReorderProducts, tzUploadPhoto, tzLogoUrl, tzVaultList, tzVaultAdd, tzVaultImport, tzVaultDelete, tzVaultUpdate, type TzProduct, type VaultRow } from '../tzstore';
 import { Badge, Button, Card, Modal, Confirm, Empty, Field, Input, Select, Skeleton, Textarea, toast } from '../ui';
+
+export const PRESET_LOGOS = [
+  { name: 'GitHub', slug: 'github', logo: '/logos/github.svg', emoji: '🐙' },
+  { name: 'Canva', slug: 'canva', logo: '/logos/canva.svg', emoji: '🎨' },
+  { name: 'ChatGPT', slug: 'chatgpt', logo: '/logos/chatgpt.svg', emoji: '💬' },
+  { name: 'Claude', slug: 'claude', logo: '/logos/claude.svg', emoji: '🧠' },
+  { name: 'Gemini', slug: 'gemini', logo: '/logos/gemini.svg', emoji: '✨' },
+  { name: 'CapCut', slug: 'capcut', logo: '/logos/capcut.svg', emoji: '🎬' },
+  { name: 'Telegram', slug: 'telegram-premium', logo: '/logos/telegram-premium.svg', emoji: '✈️' },
+  { name: 'Netflix', slug: 'netflix', logo: '/logos/netflix.svg', emoji: '🍿' },
+  { name: 'YouTube', slug: 'youtube', logo: '/logos/youtube.svg', emoji: '▶️' },
+  { name: 'Figma', slug: 'figma', logo: '/logos/figma.svg', emoji: '🖌️' },
+  { name: 'Duolingo', slug: 'duolingo', logo: '/logos/duolingo.svg', emoji: '🦉' },
+  { name: 'VPN', slug: 'vpn', logo: '/logos/vpn.svg', emoji: '🛡️' },
+  { name: 'Grok', slug: 'grok', logo: '/logos/grok.svg', emoji: '🤖' },
+  { name: 'Leonardo', slug: 'leonardo', logo: '/logos/leonardo.svg', emoji: '🎭' },
+];
+
+export function parseQuickPrompt(raw: string, availableCats: Array<{ slug: string; name: string }>) {
+  const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return null;
+
+  const result: {
+    title?: string;
+    categorySlug?: string;
+    price?: string;
+    image?: string;
+    desc?: string;
+    contents?: string;
+    accounts?: string;
+  } = {};
+
+  const vaultLines: string[] = [];
+  let inVaultSection = false;
+
+  for (const line of lines) {
+    if (/^(accounts|vault|credentials|stock):/i.test(line)) {
+      inVaultSection = true;
+      const after = line.replace(/^(accounts|vault|credentials|stock):/i, '').trim();
+      if (after) vaultLines.push(after);
+      continue;
+    }
+    if (inVaultSection) {
+      vaultLines.push(line);
+      continue;
+    }
+
+    const titleMatch = line.match(/^title:\s*(.*)/i);
+    if (titleMatch) { result.title = titleMatch[1].trim(); continue; }
+
+    const priceMatch = line.match(/^(price|price usdt|cost):\s*\$?([0-9.]+)/i);
+    if (priceMatch) { result.price = priceMatch[2].trim(); continue; }
+
+    const catMatch = line.match(/^category:\s*(.*)/i);
+    if (catMatch) {
+      const catText = catMatch[1].trim().toLowerCase();
+      const matched = availableCats.find((c) => c.slug.toLowerCase() === catText || c.name.toLowerCase() === catText || catText.includes(c.name.toLowerCase()));
+      if (matched) result.categorySlug = matched.slug;
+      else result.categorySlug = catText;
+      continue;
+    }
+
+    const imgMatch = line.match(/^(image|logo|photo|img|image url|icon):\s*(.*)/i);
+    if (imgMatch) { result.image = imgMatch[2].trim(); continue; }
+
+    const descMatch = line.match(/^(desc|description|marketing):\s*(.*)/i);
+    if (descMatch) { result.desc = descMatch[2].trim(); continue; }
+
+    const fmtMatch = line.match(/^(format|delivery|delivery format|instructions):\s*(.*)/i);
+    if (fmtMatch) { result.contents = fmtMatch[2].trim(); continue; }
+
+    // Pipe-separated fallback: Title | Price | Category | Image | Description
+    if (line.includes('|') && !result.title) {
+      const parts = line.split('|').map((p) => p.trim());
+      if (parts.length >= 2) {
+        result.title = parts[0];
+        const numPart = parts.find((p) => /^\$?[0-9.]+$/.test(p.replace('$', '')));
+        if (numPart) result.price = numPart.replace('$', '');
+        const urlPart = parts.find((p) => /^https?:\/\//i.test(p) || p.startsWith('/logos/'));
+        if (urlPart) result.image = urlPart;
+        const catPart = parts.find((p) => availableCats.some((c) => c.name.toLowerCase() === p.toLowerCase() || c.slug.toLowerCase() === p.toLowerCase()));
+        if (catPart) {
+          const c = availableCats.find((x) => x.name.toLowerCase() === catPart.toLowerCase() || x.slug.toLowerCase() === catPart.toLowerCase());
+          if (c) result.categorySlug = c.slug;
+        }
+        continue;
+      }
+    }
+
+    // Bare URL fallback
+    if (/^https?:\/\//i.test(line) && !result.image) {
+      result.image = line;
+      continue;
+    }
+
+    // If first line has no prefix and no title set yet
+    if (!result.title) {
+      result.title = line;
+    } else if (!result.desc) {
+      result.desc = line;
+    }
+  }
+
+  if (vaultLines.length > 0) {
+    result.accounts = vaultLines.join('\n');
+  }
+
+  return result;
+}
 
 const col = createColumnHelper<TzProduct & { categoryName: string }>();
 
@@ -800,6 +909,8 @@ export default function Products() {
   const [newCatName, setNewCatName] = useState('');
   const [creatingCat, setCreatingCat] = useState(false);
   const [formError, setFormError] = useState('');
+  const [showPromptBox, setShowPromptBox] = useState(false);
+  const [promptText, setPromptText] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
   const cats = useQuery({ queryKey: ['tz-cats'], queryFn: tzGetCategories });
@@ -1028,7 +1139,22 @@ export default function Products() {
     setCreating(false); setNTitle(''); setNCat(''); setNPrice(''); setNDesc(''); setNContents(''); setNDeliveryMode('AUTO'); setNAccounts(''); setNStock('0');
     setNPhoto(''); setNPreview(''); setNTiers([]); setNSortOrder(''); setSaving(false); setFormError('');
     setShowNewCat(false); setNewCatName(''); setCreatingCat(false);
+    setShowPromptBox(false); setPromptText('');
     if (fileRef.current) fileRef.current.value = '';
+  }
+
+  function applyPrompt() {
+    if (!promptText.trim()) { toast('Paste a prompt or product details first'); return; }
+    const parsed = parseQuickPrompt(promptText, (cats.data?.categories ?? []) as { slug: string; name: string }[]);
+    if (!parsed) { toast('Could not parse prompt'); return; }
+    if (parsed.title) setNTitle(parsed.title);
+    if (parsed.price) setNPrice(parsed.price);
+    if (parsed.categorySlug) setNCat(parsed.categorySlug);
+    if (parsed.image) { setNPhoto(parsed.image); setNPreview(parsed.image); }
+    if (parsed.desc) setNDesc(parsed.desc);
+    if (parsed.contents) setNContents(parsed.contents);
+    if (parsed.accounts) setNAccounts(parsed.accounts);
+    toast('⚡ Prompt applied to product form!');
   }
 
   async function createCategoryInline() {
@@ -1144,37 +1270,76 @@ export default function Products() {
         {editing && (
           <div className="space-y-3">
             <p className="text-xs text-slate-500">ID <code>{editing.id}</code> · Stock <b>{editing.stock}</b></p>
-            <div className="flex items-center gap-3">
-              <button type="button" onClick={() => editFileRef.current?.click()} className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 hover:border-blue-500 hover:bg-blue-50 dark:border-slate-700 dark:bg-slate-800 p-1">
-                {ePreview ? (
-                  <img
-                    src={ePreview.startsWith('data:') ? ePreview : tzLogoUrl(ePreview)}
-                    alt="preview"
-                    className="h-full w-full object-contain"
-                    onError={(e) => {
-                      (e.target as HTMLElement).style.opacity = '0.3';
-                    }}
-                  />
-                ) : (
-                  <ImagePlus size={26} className="text-slate-400" />
-                )}
-              </button>
-              <div className="text-sm">
-                <div className="font-semibold">Product photo</div>
-                <p className="text-xs text-slate-500">PNG/JPG/WebP under 2MB. Click the box or drag a file.</p>
-                <input ref={editFileRef} type="file" accept="image/*" className="hidden"
-                  onChange={(e) => onEditPhotoFile(e.target.files?.[0])} />
-                <div className="mt-1 flex gap-2">
-                  <Button variant="outline" onClick={() => editFileRef.current?.click()} disabled={eUploading}>{eUploading ? 'Uploading…' : 'Change photo'}</Button>
-                  {ePreview && <button onClick={() => { setEPreview(''); setEPhoto(''); if (editFileRef.current) editFileRef.current.value = ''; }} className="flex items-center gap-1 text-xs text-slate-500 hover:text-red-600"><X size={14} /> Remove</button>}
+            {/* Product Photo & Logo */}
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3.5 dark:border-slate-800 dark:bg-slate-900/40 space-y-3">
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Product Image & Logo</label>
+              <div className="flex items-center gap-3">
+                <button type="button" onClick={() => editFileRef.current?.click()} className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-slate-300 bg-white hover:border-blue-500 hover:bg-blue-50 dark:border-slate-700 dark:bg-slate-800 p-1">
+                  {ePreview ? (
+                    <img
+                      src={ePreview.startsWith('data:') ? ePreview : tzLogoUrl(ePreview)}
+                      alt="preview"
+                      className="h-full w-full object-contain"
+                      onError={(e) => {
+                        (e.target as HTMLElement).style.opacity = '0.3';
+                      }}
+                    />
+                  ) : (
+                    <ImagePlus size={26} className="text-slate-400" />
+                  )}
+                </button>
+                <div className="flex-1 min-w-[200px] space-y-2">
+                  <div className="flex gap-2">
+                    <Input
+                      value={ePhoto}
+                      onChange={(e) => { setEPhoto(e.target.value); setEPreview(e.target.value); }}
+                      placeholder="Paste Image URL (https://... or /logos/brand.svg)"
+                      className="text-xs"
+                    />
+                    <Button variant="outline" type="button" onClick={() => editFileRef.current?.click()} disabled={eUploading} className="shrink-0 text-xs">
+                      <Upload size={13} className="mr-1" />
+                      {eUploading ? '…' : 'Upload'}
+                    </Button>
+                    {ePhoto && (
+                      <button type="button" onClick={() => { setEPhoto(''); setEPreview(''); if (editFileRef.current) editFileRef.current.value = ''; }} className="rounded-lg px-2 text-slate-400 hover:text-red-500" title="Remove image">
+                        <X size={15} />
+                      </button>
+                    )}
+                  </div>
+                  <input ref={editFileRef} type="file" accept="image/*" className="hidden"
+                    onChange={(e) => onEditPhotoFile(e.target.files?.[0])} />
+                  <p className="text-[11px] text-slate-400">Paste web image URL, choose a popular preset below, or upload a file under 2MB.</p>
                 </div>
               </div>
-            </div>
-            <div
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => { e.preventDefault(); onEditPhotoFile(e.dataTransfer.files?.[0]); }}
-              className="rounded-xl bg-slate-50 p-2 text-center text-[11px] text-slate-400 dark:bg-slate-800/60">
-              Drop an image anywhere on this box to upload instantly
+
+              {/* Popular Preset Logos Palette */}
+              <div>
+                <span className="block text-[11px] font-semibold text-slate-500 mb-1.5">⚡ 1-Click Popular Logos:</span>
+                <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                  {PRESET_LOGOS.map((p) => {
+                    const isSelected = ePhoto === p.logo || ePreview === p.logo;
+                    return (
+                      <button
+                        key={p.name}
+                        type="button"
+                        onClick={() => {
+                          setEPhoto(p.logo);
+                          setEPreview(p.logo);
+                          toast(`Selected ${p.name} logo`);
+                        }}
+                        className={`inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-xs font-medium border transition ${
+                          isSelected
+                            ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 font-bold'
+                            : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                        }`}
+                      >
+                        <span className="text-sm">{p.emoji}</span>
+                        <span>{p.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
             <Field label="Title"><Input value={eTitle} onChange={(e) => setETitle(e.target.value)} /></Field>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -1204,26 +1369,125 @@ export default function Products() {
       />
       <Modal open={creating} onClose={() => setCreating(false)} title="New product — TZ Store">
         <div className="space-y-3">
-          <div className="flex items-center gap-3">
-            <button type="button" onClick={() => fileRef.current?.click()} className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 hover:border-blue-500 hover:bg-blue-50 dark:border-slate-700 dark:bg-slate-800 p-1">
-              {nPreview ? <img src={nPreview} alt="preview" className="h-full w-full object-contain" /> : <ImagePlus size={26} className="text-slate-400" />}
-            </button>
-            <div className="text-sm">
-              <div className="font-semibold">Product photo</div>
-              <p className="text-xs text-slate-500">PNG/JPG/WebP under 2MB. Click the box or drag a file.</p>
-              <input ref={fileRef} type="file" accept="image/*" className="hidden"
-                onChange={(e) => onPhotoFile(e.target.files?.[0])} />
-              <div className="mt-1 flex gap-2">
-                <Button variant="outline" onClick={() => fileRef.current?.click()} disabled={uploading}>{uploading ? 'Uploading…' : nPhoto ? 'Change photo' : 'Add photo'}</Button>
-                {nPreview && <button onClick={() => { setNPreview(''); setNPhoto(''); if (fileRef.current) fileRef.current.value = ''; }} className="flex items-center gap-1 text-xs text-slate-500 hover:text-red-600"><X size={14} /> Remove</button>}
+          {/* Quick Prompt Auto-Fill Bar */}
+          <div className="rounded-2xl border border-purple-200 bg-purple-50/50 p-3.5 dark:border-purple-900/50 dark:bg-purple-950/20">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-xs font-bold text-purple-700 dark:text-purple-300">
+                <Sparkles size={15} className="text-purple-600 dark:text-purple-400" /> ⚡ Fast Add with AI / Text Prompt
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowPromptBox(!showPromptBox)}
+                className="rounded-lg bg-purple-100 dark:bg-purple-900/40 px-2 py-0.5 text-[11px] font-semibold text-purple-700 dark:text-purple-300 hover:bg-purple-200"
+              >
+                {showPromptBox ? '▲ Hide Prompt' : '▼ Paste Prompt'}
+              </button>
+            </div>
+            {showPromptBox && (
+              <div className="mt-2.5 space-y-2">
+                <Textarea
+                  rows={4}
+                  placeholder={'Paste product details or AI prompt here...\nExample:\nTitle: Netflix Premium 4K 1M\nPrice: 3.99\nCategory: streaming\nImage: /logos/netflix.svg\nDescription: Private profile with personal PIN\nFormat: Email | Password | PIN'}
+                  value={promptText}
+                  onChange={(e) => setPromptText(e.target.value)}
+                  className="text-xs font-mono"
+                />
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPromptText('Title: Canva Pro 1 Year\nPrice: 3.50\nCategory: canva\nImage: /logos/canva.svg\nDescription: Full 12-month private activation on personal email.\nFormat: Email | Invite Link\nAccounts:\ncanva_user1@tzstore.io | Pass123\ncanva_user2@tzstore.io | Pass456');
+                      toast('Sample prompt loaded');
+                    }}
+                    className="text-[11px] text-purple-600 dark:text-purple-400 hover:underline"
+                  >
+                    Load Sample Prompt
+                  </button>
+                  <Button
+                    type="button"
+                    onClick={applyPrompt}
+                    className="!py-1.5 !px-3 text-xs"
+                  >
+                    ⚡ Apply Prompt to Form
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Product Image Section */}
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3.5 dark:border-slate-800 dark:bg-slate-900/40 space-y-3">
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Product Image & Logo</label>
+            <div className="flex items-center gap-3">
+              <button type="button" onClick={() => fileRef.current?.click()} className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-slate-300 bg-white hover:border-blue-500 hover:bg-blue-50 dark:border-slate-700 dark:bg-slate-800 p-1">
+                {nPreview ? (
+                  <img
+                    src={nPreview.startsWith('data:') ? nPreview : tzLogoUrl(nPreview)}
+                    alt="preview"
+                    className="h-full w-full object-contain"
+                    onError={(e) => {
+                      (e.target as HTMLElement).style.opacity = '0.3';
+                    }}
+                  />
+                ) : (
+                  <ImagePlus size={26} className="text-slate-400" />
+                )}
+              </button>
+              <div className="flex-1 min-w-[200px] space-y-2">
+                <div className="flex gap-2">
+                  <Input
+                    value={nPhoto}
+                    onChange={(e) => { setNPhoto(e.target.value); setNPreview(e.target.value); }}
+                    placeholder="Paste Image URL (https://... or /logos/brand.svg)"
+                    className="text-xs"
+                  />
+                  <Button variant="outline" type="button" onClick={() => fileRef.current?.click()} disabled={uploading} className="shrink-0 text-xs">
+                    <Upload size={13} className="mr-1" />
+                    {uploading ? '…' : 'Upload'}
+                  </Button>
+                  {nPhoto && (
+                    <button type="button" onClick={() => { setNPhoto(''); setNPreview(''); if (fileRef.current) fileRef.current.value = ''; }} className="rounded-lg px-2 text-slate-400 hover:text-red-500" title="Remove image">
+                      <X size={15} />
+                    </button>
+                  )}
+                </div>
+                <input ref={fileRef} type="file" accept="image/*" className="hidden"
+                  onChange={(e) => onPhotoFile(e.target.files?.[0])} />
+                <p className="text-[11px] text-slate-400">Paste web image URL, choose a popular preset below, or upload a file under 2MB.</p>
               </div>
             </div>
-          </div>
-          <div
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => { e.preventDefault(); onPhotoFile(e.dataTransfer.files?.[0]); }}
-            className="rounded-xl bg-slate-50 p-2 text-center text-[11px] text-slate-400 dark:bg-slate-800/60">
-            Drop an image anywhere on this box to upload instantly
+
+            {/* Popular Preset Logos Palette */}
+            <div>
+              <span className="block text-[11px] font-semibold text-slate-500 mb-1.5">⚡ 1-Click Popular Logos:</span>
+              <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                {PRESET_LOGOS.map((p) => {
+                  const isSelected = nPhoto === p.logo || nPreview === p.logo;
+                  return (
+                    <button
+                      key={p.name}
+                      type="button"
+                      onClick={() => {
+                        setNPhoto(p.logo);
+                        setNPreview(p.logo);
+                        if (!nCat && cats.data?.categories?.some((c: any) => c.slug === p.slug)) {
+                          setNCat(p.slug);
+                        }
+                        toast(`Selected ${p.name} logo`);
+                      }}
+                      className={`inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-xs font-medium border transition ${
+                        isSelected
+                          ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 font-bold'
+                          : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                      }`}
+                    >
+                      <span className="text-sm">{p.emoji}</span>
+                      <span>{p.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
           <Field label="Title"><Input value={nTitle} onChange={(e) => setNTitle(e.target.value)} placeholder="e.g. Netflix Premium 1M" /></Field>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">

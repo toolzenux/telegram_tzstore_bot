@@ -5,8 +5,8 @@ import { db } from '@/lib/db';
 import { getAdminFromRequest, audit } from '@/lib/admin-jwt';
 
 const createBroadcastSchema = z.object({
-  title: z.string().min(1),
-  text: z.string().min(1),
+  title: z.string().optional().default('Announcement'),
+  text: z.string().min(1, 'Message text is required'),
   targetType: z.enum(['ALL', 'SEGMENT']).default('ALL'),
 });
 
@@ -20,7 +20,7 @@ export async function GET(req: Request) {
   try {
     const list = await prisma.broadcast.findMany({
       orderBy: { createdAt: 'desc' },
-      take: 30,
+      take: 50,
     });
     return NextResponse.json(list);
   } catch (e) {
@@ -32,14 +32,16 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const admin = await getAdminFromRequest(req);
   if (!admin) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  if (admin.role !== 'SUPER_ADMIN' && admin.role !== 'MANAGER') {
+  if (admin.role !== 'SUPER_ADMIN' && admin.role !== 'MANAGER' && (admin.role as string) !== 'ADMIN') {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   }
 
   const json = await req.json().catch(() => ({}));
-  const parsed = createBroadcastSchema.safeParse(json);
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  const rawTitle = typeof json.title === 'string' && json.title.trim() ? json.title.trim() : 'Announcement';
+  const rawText = typeof json.text === 'string' ? json.text.trim() : '';
+
+  if (!rawText) {
+    return NextResponse.json({ error: 'Message text is required' }, { status: 400 });
   }
 
   const prisma = db();
@@ -48,19 +50,19 @@ export async function POST(req: Request) {
   try {
     const b = await prisma.broadcast.create({
       data: {
-        title: parsed.data.title,
-        text: parsed.data.text,
-        targetType: parsed.data.targetType,
+        title: rawTitle,
+        text: rawText,
+        targetType: json.targetType === 'SEGMENT' ? 'SEGMENT' : 'ALL',
         status: 'DRAFT',
       },
     });
 
     const clientIp = req.headers.get('x-forwarded-for') || '';
-    await audit(admin.id, 'create', 'broadcast', b.id, null, b, clientIp);
+    audit(admin.id, 'create', 'broadcast', b.id, null, b, clientIp).catch(() => null);
 
     return NextResponse.json(b, { status: 201 });
-  } catch (e) {
+  } catch (e: any) {
     console.error('Broadcast create error:', e);
-    return NextResponse.json({ error: 'failed to create broadcast' }, { status: 500 });
+    return NextResponse.json({ error: e?.message || 'failed to create broadcast' }, { status: 500 });
   }
 }

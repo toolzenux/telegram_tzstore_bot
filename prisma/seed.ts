@@ -12,11 +12,11 @@ async function main() {
   for (const [name, emoji, sortOrder] of CATS) {
     await prisma.category.upsert({ where: { name }, update: { emoji, sortOrder }, create: { name, emoji, sortOrder } });
   }
-  const hash = await bcrypt.hash('Admin@123', 12);
+  const hash = await bcrypt.hash('Toolzenux#@', 12);
   await prisma.admin.upsert({
-    where: { email: 'admin@tzstore.io' },
-    update: { role: 'SUPER_ADMIN' },
-    create: { email: 'admin@tzstore.io', passwordHash: hash, role: 'SUPER_ADMIN' },
+    where: { email: 'toolzenux@gmail.com' },
+    update: { passwordHash: hash, role: 'SUPER_ADMIN' },
+    create: { email: 'toolzenux@gmail.com', passwordHash: hash, role: 'SUPER_ADMIN' },
   });
   const defaults: Record<string, unknown> = {
     referralPercent: 5, supportUrl: 'https://t.me/TzStore_Support', channelUrl: 'https://t.me/TZStoreChannel',
@@ -26,6 +26,6 @@ async function main() {
   for (const [key, value] of Object.entries(defaults)) {
     await prisma.setting.upsert({ where: { key }, update: {}, create: { key, value: value as object } });
   }
-  console.log('seed ok: 16 categories + admin@tzstore.io / Admin@123');
+  console.log('seed ok: 16 categories + toolzenux@gmail.com / Toolzenux#@');
 }
 main().finally(() => prisma.$disconnect());
