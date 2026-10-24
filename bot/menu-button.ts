@@ -30,11 +30,24 @@ const bot = new Bot(process.env.BOT_TOKEN || 'test-token', {
     },
   },
 });
-const URL = process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
+function resolveStoreUrl(): string {
+  const envUrl = (process.env.WEBAPP_URL || '').trim();
+  const renderUrl = (process.env.RENDER_EXTERNAL_URL || '').trim();
+  if (renderUrl && (!envUrl || envUrl.includes('trycloudflare.com') || envUrl.includes('localhost'))) {
+    return renderUrl.replace(/\/+$/, '');
+  }
+  if (envUrl && !envUrl.includes('trycloudflare.com')) {
+    return envUrl.replace(/\/+$/, '');
+  }
+  if (renderUrl) {
+    return renderUrl.replace(/\/+$/, '');
+  }
+  return 'https://telegram-tzstore-bot.onrender.com';
+}
 
 async function initMenuButton() {
-  const storeUrl = process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
-  const adminUrl = `${storeUrl.replace(/\/+$/, '')}/admin/mobile`;
+  const storeUrl = resolveStoreUrl();
+  const adminUrl = `${storeUrl}/admin/mobile`;
 
   const adminIds = [
     ...(process.env.ADMIN_USER_IDS || '').split(','),

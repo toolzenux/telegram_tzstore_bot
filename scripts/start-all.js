@@ -79,6 +79,21 @@ if (process.env.ADMIN_BOT_TOKEN && process.env.ADMIN_BOT_TOKEN !== process.env.B
   console.log(`[Render Runner] Note: ADMIN_BOT_TOKEN not set or identical to BOT_TOKEN.`);
 }
 
+// 4. Synchronize Telegram Menu Buttons with current WebApp URL
+if (process.env.BOT_TOKEN) {
+  setTimeout(() => {
+    console.log(`[Render Runner] Syncing Telegram Menu Buttons...`);
+    const menuProc = spawn('npx', ['tsx', 'bot/menu-button.ts'], {
+      stdio: 'inherit',
+      env: process.env,
+      shell: true,
+    });
+    menuProc.on('exit', (code) => {
+      console.log(`[Render Runner] Menu button sync completed with code ${code}`);
+    });
+  }, 3000);
+}
+
 // Graceful shutdown handling
 function shutdown(signal) {
   console.log(`[Render Runner] Received ${signal}. Shutting down all services...`);

@@ -45,8 +45,17 @@ export const adminBot = token
   : null;
 
 function getAdminPortalUrl(): string {
-  const base = process.env.ADMIN_WEBAPP_URL || process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
-  return `${base.replace(/\/+$/, '')}/admin/mobile`;
+  const envUrl = (process.env.ADMIN_WEBAPP_URL || process.env.WEBAPP_URL || '').trim();
+  const renderUrl = (process.env.RENDER_EXTERNAL_URL || '').trim();
+  let base = 'https://telegram-tzstore-bot.onrender.com';
+  if (renderUrl && (!envUrl || envUrl.includes('trycloudflare.com') || envUrl.includes('localhost'))) {
+    base = renderUrl.replace(/\/+$/, '');
+  } else if (envUrl && !envUrl.includes('trycloudflare.com')) {
+    base = envUrl.replace(/\/+$/, '');
+  } else if (renderUrl) {
+    base = renderUrl.replace(/\/+$/, '');
+  }
+  return `${base}/admin/mobile`;
 }
 
 function getDirectAdminToken(tgId: number | string): string {

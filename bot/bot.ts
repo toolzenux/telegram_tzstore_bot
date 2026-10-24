@@ -44,7 +44,22 @@ const bot = new Bot(token || 'dummy_token_for_init', {
   },
 });
 
-const WEBAPP = process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
+function resolveWebAppUrl(): string {
+  const envUrl = (process.env.WEBAPP_URL || '').trim();
+  const renderUrl = (process.env.RENDER_EXTERNAL_URL || '').trim();
+  if (renderUrl && (!envUrl || envUrl.includes('trycloudflare.com') || envUrl.includes('localhost'))) {
+    return renderUrl.replace(/\/+$/, '');
+  }
+  if (envUrl && !envUrl.includes('trycloudflare.com')) {
+    return envUrl.replace(/\/+$/, '');
+  }
+  if (renderUrl) {
+    return renderUrl.replace(/\/+$/, '');
+  }
+  return 'https://telegram-tzstore-bot.onrender.com';
+}
+
+const WEBAPP = resolveWebAppUrl();
 const CHANNEL = process.env.CHANNEL_URL ?? 'https://t.me/TZStoreChannel';
 const SUPPORT = process.env.SUPPORT_URL ?? 'https://t.me/TzStore_Support';
 const STORE_UID = process.env.BINANCE_UID ?? '1134278389';
